@@ -49,14 +49,22 @@ export class CornerEditor {
     this.render();
   }
 
-  /** 表示領域に合わせて canvas の実ピクセル数を決める。回転や画面幅の変化で呼ぶ。 */
+  /**
+   * 表示領域に合わせて canvas の実ピクセル数を決める。回転や画面幅の変化で呼ぶ。
+   *
+   * 幅だけで決めると、縦長の写真で下側がビューポートからはみ出し、
+   * 下の四隅に指が届かなくなる。高さの上限も見て両方に収める。
+   */
   layout(): void {
     const image = this.#image;
     if (!image) return;
     const ratio = Math.min(globalThis.devicePixelRatio || 1, 2);
-    const cssWidth = this.#canvas.clientWidth || image.width;
-    const displayWidth = Math.min(cssWidth, image.width);
-    const displayHeight = displayWidth * (image.height / image.width);
+    const boxWidth = this.#canvas.parentElement?.clientWidth ?? 0;
+    if (boxWidth <= 0) return;
+    const boxHeight = Math.max(240, Math.round((globalThis.innerHeight || 800) * 0.46));
+    const scale = Math.min(boxWidth / image.width, boxHeight / image.height);
+    const displayWidth = Math.max(1, Math.round(image.width * scale));
+    const displayHeight = Math.max(1, Math.round(image.height * scale));
 
     this.#canvas.style.width = `${displayWidth}px`;
     this.#canvas.style.height = `${displayHeight}px`;

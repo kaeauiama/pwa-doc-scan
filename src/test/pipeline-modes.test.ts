@@ -3,7 +3,7 @@ import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
 
-import { DEFAULTS, fullFrameQuad, outputSizeFor, scanToPage } from "../pipeline.ts";
+import { DEFAULTS, encodeOutput, fullFrameQuad, outputSizeFor, scanToPage } from "../pipeline.ts";
 import { whitenBackground } from "../core/whiten.ts";
 import { makeDocumentPhoto, makeIdealPage } from "./fixtures/synthetic.ts";
 import type { JpegEncoder } from "../ports/JpegEncoder.ts";
@@ -182,4 +182,41 @@ test("白飛ばしは照明ムラを消す(紙の明るさが場所によらな�
   const afterSpread = Math.abs(paperMean(0, 0, w >> 1, h >> 1, after.data) - paperMean(w >> 1, h >> 1, w, h, after.data));
   assert.ok(beforeSpread > 40, "元画像に十分な照明ムラがある前提");
   assert.ok(afterSpread < beforeSpread / 8, `ムラが残っている (${beforeSpread.toFixed(0)} -> ${afterSpread.toFixed(0)})`);
+});
+
+test("形式の切替: PDF と画像で中身が変わる", async () => {
+  const jpeg = new FakeJpegEncoder();
+  const color = await scanToPage(fixture.photo, { mode: "color", dpi: 200 }, jpeg);
+
+  const pdf = await encodeOutput(color, "pdf");
+  assert.equal(pdf.mimeType, "application/pdf");
+  assert.equal(pdf.extension, "pdf");
+  assert.equal(String.fromCharCode(...pdf.bytes.subarray(0, 5)), "%PDF-");
+
+  const image = await encodeOutput(color, "image");
+  assert.equal(image.mimeType, "image/jpeg");
+  assert.equal(image.extension, "jpg");
+  assert.equal(image.bytes[0], 0xff, "JPEG の SOI");
+  assert.equal(image.bytes[1], 0xd8);
+});
+
+test("白黒2値を画像で出すと 1bit PNG になる(JPEG にはしない)", async () => {
+  const jpeg = new FakeJpegEncoder();
+  const bw = await scanToPage(fixture.photo, { mode: "bilevel", dpi: 200 }, jpeg);
+  const image = await encodeOutput(bw, "image");
+  assert.equal(image.mimeType, "image/png");
+  assert.equal(image.extension, "png");
+  assert.deepEqual([...image.bytes.subarray(0, 8)], [137, 80, 78, 71, 13, 10, 26, 10], "PNG シグネチャ");
+  assert.equal(jpeg.calls.length, 0, "白黒2値で JPEG を作ってはいけない");
+});
+
+test("画像形式は JPEG を再エンコードしない", async () => {
+  const jpeg = new FakeJpegEncoder();
+  const color = await scanToPage(fixture.photo, { mode: "color", dpi: 150 }, jpeg);
+  const image = await encodeOutput(color, "image");
+  // scanToPage が作った JPEG のバイト列がそのまま出ること
+  const embedded = color.page.image.kind === "jpeg" ? color.page.image.bytes : null;
+  assert.ok(embedded);
+  assert.deepEqual([...image.bytes], [...embedded]);
+  assert.equal(jpeg.calls.length, 1, "エンコードは 1 回だけ");
 });

@@ -2,7 +2,8 @@ import { binarize } from "./core/binarize.ts";
 import { CONFIG, paperPixels } from "./core/config.ts";
 import { detectDocumentQuad } from "./core/detect.ts";
 import { rgbaToGray } from "./core/gray.ts";
-import { bilevelPage, jpegPage } from "./core/pdf.ts";
+import { bilevelPage, encodePdf, jpegPage } from "./core/pdf.ts";
+import { encodePng1bit } from "./core/png.ts";
 import { estimateOutputSize, insetQuad, warpGray, warpRgba } from "./core/warp.ts";
 import { whitenBackground } from "./core/whiten.ts";
 import type { BinarizeMethod } from "./core/binarize.ts";
@@ -10,6 +11,17 @@ import type { DetectResult } from "./core/detect.ts";
 import type { PdfPage } from "./core/pdf.ts";
 import type { Bilevel, Quad, Rgba } from "./core/types.ts";
 import type { JpegEncoder } from "./ports/JpegEncoder.ts";
+
+/** 作成物の形式(REQ-22)。PDF か、そのまま扱える画像か。 */
+export type OutputFormat = "pdf" | "image";
+
+export interface EncodedOutput {
+  readonly bytes: Uint8Array;
+  readonly mimeType: string;
+  readonly extension: string;
+  /** 利用者に見せる短い説明 */
+  readonly label: string;
+}
 
 /** 出力モード(REQ-20)。既定は書類向けの白黒2値。 */
 export type RenderMode = "color" | "grayscale" | "bilevel";
@@ -156,5 +168,38 @@ export async function scanToPage(
     dpi,
     outputWidth: size.width,
     outputHeight: size.height,
+  };
+}
+
+
+/**
+ * 処理結果をファイルのバイト列にする。
+ *
+ * 画像形式は再エンコードしない。カラー / グレースケールは `scanToPage` が作った
+ * JPEG をそのまま返し、白黒2値は 1bit PNG にする。
+ * 白黒2値を JPEG にすると輪郭にリンギングが出るうえサイズも増えるため、選ばせない。
+ */
+export async function encodeOutput(result: ScanResult, format: OutputFormat): Promise<EncodedOutput> {
+  if (format === "pdf") {
+    return {
+      bytes: await encodePdf([result.page]),
+      mimeType: "application/pdf",
+      extension: "pdf",
+      label: "PDF",
+    };
+  }
+  if (result.page.image.kind === "jpeg") {
+    return {
+      bytes: result.page.image.bytes,
+      mimeType: "image/jpeg",
+      extension: "jpg",
+      label: "JPEG 画像",
+    };
+  }
+  return {
+    bytes: await encodePng1bit(result.page.image.image, result.dpi),
+    mimeType: "image/png",
+    extension: "png",
+    label: "PNG 画像(1bit)",
   };
 }

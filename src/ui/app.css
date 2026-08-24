@@ -68,6 +68,19 @@ h2 { font-size: 14px; margin: 6px 0 0; color: var(--mut); }
 .actions { display: flex; flex-direction: column; gap: 10px; }
 .controls { display: flex; align-items: center; justify-content: center; gap: 10px; flex-wrap: wrap; }
 
+/* 主要な操作が画面の下に隠れないよう、下端に貼り付ける */
+.controls.sticky {
+  position: sticky;
+  bottom: 0;
+  padding: 10px 0 calc(10px + env(safe-area-inset-bottom));
+  margin-top: -4px;
+  background: linear-gradient(to top, var(--bg) 65%, transparent);
+  z-index: 5;
+}
+.controls.sticky button { min-width: 200px; }
+/* 調整画面は要素が多いので、副次的なボタンは小さくして 1 行に収める */
+#view-adjust .controls:not(.sticky) button { padding: 9px 12px; font-size: 13px; }
+
 button, .button {
   font: inherit;
   font-weight: 600;
@@ -119,7 +132,7 @@ button:disabled { opacity: .45; cursor: default; }
   height: 100%;
   pointer-events: none;
 }
-#editor { touch-action: none; }
+#editor { touch-action: none; max-height: none; }
 #view-capture .stage { background: #000; }
 
 .badge {

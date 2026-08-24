@@ -1,8 +1,7 @@
 import { detectDocumentQuad } from "../core/detect.ts";
 import { rgbaToGray } from "../core/gray.ts";
-import { encodePdf } from "../core/pdf.ts";
 import { CONFIG } from "../core/config.ts";
-import { fullFrameQuad, scanToPage } from "../pipeline.ts";
+import { encodeOutput, fullFrameQuad, scanToPage } from "../pipeline.ts";
 import { LiveCameraSource } from "../adapters/LiveCameraSource.ts";
 import { FileImportSource } from "../adapters/FileImportSource.ts";
 import { CanvasJpegEncoder } from "../adapters/CanvasJpegEncoder.ts";
@@ -10,8 +9,9 @@ import { DownloadExporter, ShareExporter, exportWithFallback } from "../adapters
 import { SourceError } from "../ports/ImageSource.ts";
 import { CornerEditor } from "./CornerEditor.ts";
 import { bilevelToCanvas, containFit, drawQuad, rgbaToCanvas } from "./render.ts";
+import { clampQuad } from "../core/warp.ts";
 import { collectEnvironment, getFailures, isStandalone, recordFailure } from "./diagnostics.ts";
-import type { RenderMode } from "../pipeline.ts";
+import type { OutputFormat, RenderMode } from "../pipeline.ts";
 import type { Quad, Rgba } from "../core/types.ts";
 
 /* ---------------- 要素 ---------------- */
@@ -64,9 +64,10 @@ let displayScale = 1;
 let detectedQuad: Quad | null = null;
 
 let mode: RenderMode = "bilevel";
+let format: OutputFormat = "pdf";
 let dpi: number = CONFIG.output.defaultDpi;
 let whiten = true;
-let lastPdf: Uint8Array | null = null;
+let lastOutput: { bytes: Uint8Array; mimeType: string; extension: string } | null = null;
 
 /* ---------------- 小物 ---------------- */
 
@@ -251,7 +252,8 @@ async function goToAdjust(frame: Rgba, source: string): Promise<void> {
     const detection = detectDocumentQuad(rgbaToGray(frame));
     const note = $("adjust-note");
     if (detection.ok) {
-      detectedQuad = detection.quad;
+      // 検出は画像の外側まで角を許すが、外に出るとハンドルを掴めなくなる
+      detectedQuad = clampQuad(detection.quad, frame.width, frame.height);
       note.textContent = `輪郭を検出しました(確からしさ ${(detection.confidence * 100).toFixed(0)}%)。ずれていれば四隅をドラッグして直してください。`;
     } else {
       detectedQuad = fullFrameQuad(frame.width, frame.height);
@@ -285,10 +287,10 @@ async function process(): Promise<void> {
     const quad = scaleQuad(editor.getQuad(), 1 / displayScale);
     const started = performance.now();
     const result = await scanToPage(captured, { mode, dpi, quad, whiten }, jpegEncoder);
-    const pdf = await encodePdf([result.page]);
+    const output = await encodeOutput(result, format);
     const elapsed = Math.round(performance.now() - started);
 
-    lastPdf = pdf;
+    lastOutput = output;
 
     if (result.processed.kind === "bilevel") bilevelToCanvas(result.processed.image, resultCanvas);
     else rgbaToCanvas(result.processed.image, resultCanvas);
@@ -299,8 +301,9 @@ async function process(): Promise<void> {
       color: "カラー",
     };
     fillTable($<HTMLTableElement>("result-info"), {
+      形式: output.label,
       出力: `${modeLabel[result.mode]} / ${result.dpi}dpi`,
-      サイズ: `${(pdf.length / 1024).toFixed(1)} KB`,
+      サイズ: `${(output.bytes.length / 1024).toFixed(1)} KB`,
       画素数: `${result.outputWidth} x ${result.outputHeight}`,
       処理時間: `${elapsed} ms`,
     });
@@ -312,15 +315,19 @@ async function process(): Promise<void> {
   }
 }
 
-function filename(): string {
+function filename(extension: string): string {
   const d = new Date();
   const pad = (n: number) => String(n).padStart(2, "0");
-  return `scan-${d.getFullYear()}${pad(d.getMonth() + 1)}${pad(d.getDate())}-${pad(d.getHours())}${pad(d.getMinutes())}${pad(d.getSeconds())}.pdf`;
+  return `scan-${d.getFullYear()}${pad(d.getMonth() + 1)}${pad(d.getDate())}-${pad(d.getHours())}${pad(d.getMinutes())}${pad(d.getSeconds())}.${extension}`;
 }
 
 async function save(onlyDownload: boolean): Promise<void> {
-  if (!lastPdf) return;
-  const payload = { bytes: lastPdf, filename: filename(), mimeType: "application/pdf" };
+  if (!lastOutput) return;
+  const payload = {
+    bytes: lastOutput.bytes,
+    filename: filename(lastOutput.extension),
+    mimeType: lastOutput.mimeType,
+  };
   const chosen = onlyDownload ? [exporters[1]] : exporters;
   const result = await exportWithFallback(payload, chosen);
   if (result.ok) {
@@ -409,6 +416,12 @@ $("btn-back-capture").addEventListener("click", () => {
   void startCamera();
 });
 
+$("btn-full-quad").addEventListener("click", () => {
+  if (!editor || !displayCanvas) return;
+  // 検出が大きく外れたときの逃げ道。画像そのものを切り出す
+  editor.setQuad(fullFrameQuad(displayCanvas.width, displayCanvas.height));
+});
+
 $("btn-reset-quad").addEventListener("click", () => {
   if (!editor || !detectedQuad) return;
   editor.setQuad(scaleQuad(detectedQuad, displayScale));
@@ -424,6 +437,13 @@ $("mode-group").addEventListener("click", (event) => {
   mode = button.dataset.mode as RenderMode;
   setSegmented($("mode-group"), mode, "mode");
   syncOptionVisibility();
+});
+
+$("format-group").addEventListener("click", (event) => {
+  const button = (event.target as HTMLElement).closest<HTMLButtonElement>("button[data-format]");
+  if (!button) return;
+  format = button.dataset.format as OutputFormat;
+  setSegmented($("format-group"), format, "format");
 });
 
 $("dpi-group").addEventListener("click", (event) => {
@@ -449,7 +469,7 @@ $("btn-back-adjust").addEventListener("click", () => {
 });
 $("btn-home").addEventListener("click", () => {
   captured = null;
-  lastPdf = null;
+  lastOutput = null;
   show("home");
 });
 
@@ -508,6 +528,7 @@ if (isStandalone()) {
 }
 
 setSegmented($("mode-group"), mode, "mode");
+setSegmented($("format-group"), format, "format");
 setSegmented($("dpi-group"), String(dpi), "dpi");
 syncOptionVisibility();
 show("home");

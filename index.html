@@ -70,6 +70,13 @@
         </div>
       </div>
       <div class="opt">
+        <span>作成物</span>
+        <div class="segmented" id="format-group" role="radiogroup" aria-label="作成物の形式">
+          <button type="button" data-format="pdf" class="on">PDF</button>
+          <button type="button" data-format="image">画像</button>
+        </div>
+      </div>
+      <div class="opt">
         <span>解像度</span>
         <div class="segmented" id="dpi-group" role="radiogroup" aria-label="出力解像度">
           <button type="button" data-dpi="150">150dpi</button>
@@ -83,9 +90,12 @@
       </label>
     </div>
     <div class="controls">
-      <button id="btn-reset-quad" class="ghost" type="button">四隅を戻す</button>
-      <button id="btn-process" class="primary" type="button">この範囲で作成</button>
+      <button id="btn-full-quad" class="ghost" type="button">枠いっぱい</button>
+      <button id="btn-reset-quad" class="ghost" type="button">検出に戻す</button>
       <button id="btn-back-capture" class="ghost" type="button">撮り直す</button>
+    </div>
+    <div class="controls sticky">
+      <button id="btn-process" class="primary big" type="button">この範囲で作成</button>
     </div>
   </section>
 

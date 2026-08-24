@@ -68,6 +68,22 @@ export function estimateOutputSize(quad: Quad, maxLongEdge?: number): { width: n
 }
 
 /**
+ * 四隅を画像の内側に収める。
+ *
+ * 検出は画像の外側 20% まで角を許している(書類が画面からはみ出している構図に対応するため)。
+ * だが画面の外の画素は存在せず、そのまま切り出しても白で埋まるだけで得るものがない。
+ * さらに編集画面ではハンドルが画面外に出て掴めなくなる。
+ * 編集に渡す前に必ずこれを通すこと。
+ */
+export function clampQuad(quad: Quad, width: number, height: number): Quad {
+  const fix = (p: Point): Point => ({
+    x: p.x < 0 ? 0 : p.x > width ? width : p.x,
+    y: p.y < 0 ? 0 : p.y > height ? height : p.y,
+  });
+  return [fix(quad[0]), fix(quad[1]), fix(quad[2]), fix(quad[3])];
+}
+
+/**
  * 四隅を重心方向に fraction だけ縮める。
  *
  * 検出した四隅は紙の縁のわずかに外側に出ることがあり、そのまま切り出すと

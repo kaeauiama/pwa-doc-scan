@@ -1,7 +1,7 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
 
-import { applyMatrix, computeHomography, estimateOutputSize, insetQuad, warpGray } from "../core/warp.ts";
+import { applyMatrix, clampQuad, computeHomography, estimateOutputSize, insetQuad, warpGray } from "../core/warp.ts";
 import { rgbaToGray } from "../core/gray.ts";
 import { agreementIgnoringEdges, makeDocumentPhoto } from "./fixtures/synthetic.ts";
 import type { Quad } from "../core/types.ts";
@@ -131,4 +131,31 @@ test("insetQuad: 重心方向に一様に縮み、比率と重心を保つ", () 
     assert.ok(Math.abs(d1 / d0 - 0.9) < 1e-9, `隅 ${i} の縮小率`);
   }
   assert.deepEqual([...insetQuad(q, 0)], [...q], "0 なら何もしない");
+});
+
+test("clampQuad: 画像の外に出た角を内側に収める", () => {
+  const outside: Quad = [
+    { x: -40, y: -25 },
+    { x: 1180, y: 10 },
+    { x: 1050, y: 900 },
+    { x: 30, y: 870 },
+  ];
+  const clamped = clampQuad(outside, 1000, 800);
+  assert.deepEqual(clamped[0], { x: 0, y: 0 }, "左上が画像内に入る");
+  assert.deepEqual(clamped[1], { x: 1000, y: 10 }, "右にはみ出した x だけ詰まる");
+  assert.deepEqual(clamped[2], { x: 1000, y: 800 });
+  assert.deepEqual(clamped[3], { x: 30, y: 800 });
+  for (const p of clamped) {
+    assert.ok(p.x >= 0 && p.x <= 1000 && p.y >= 0 && p.y <= 800, "全ての角が画像内");
+  }
+});
+
+test("clampQuad: 既に画像内なら何も変えない", () => {
+  const inside: Quad = [
+    { x: 10, y: 20 },
+    { x: 900, y: 30 },
+    { x: 890, y: 700 },
+    { x: 20, y: 690 },
+  ];
+  assert.deepEqual([...clampQuad(inside, 1000, 800)], [...inside]);
 });

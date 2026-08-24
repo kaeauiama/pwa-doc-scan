@@ -40,7 +40,12 @@ npm run build      # dist/ を生成(GitHub Pages が使う)
 
 ## 現在地
 
-**M0 完了 / M0.5 待ち。コア(`src/core/`)は先行実装済み・テスト 23 件通過。**
+**M0 完了 / M0.5 は Safari タブで実施済み(standalone は未実施)。
+コア(`src/core/`)は先行実装済み・テスト 23 件通過。**
+
+実機計測で前提が 2 つ覆った(D-017)。`getUserMedia` は **4032x3024 / 12.2MP /
+A4 実効 366dpi** を返し、**`torch` も制御できる**。静止画経路と解像度が同一のため、
+D-002 の「2 経路併存」の存在理由が消えている(U-09 として再判断待ち)。
 
 - 実装済み: グレースケール、積分画像、照明の平坦化、Sobel、Hough 直線変換、
   **書類の四隅の自動検出 + 高解像度での精密化**、適応二値化(Sauvola / Bradley)、
@@ -48,5 +53,9 @@ npm run build      # dist/ を生成(GitHub Pages が使う)
 - 未実装: 撮影 UI、実機アダプタ
   (`LiveCameraSource` / `FileCaptureSource` / `ShareExporter` / `DownloadExporter`)
 
-次のアクション: GitHub Pages に配信し、`public/probe/index.html` を iPhone / Android 実機で
-計測して `docs/10-platform-findings.md` を実測値で更新する。U-02 / U-03 / U-07 はその後に確定。
+公開先: https://kaeauiama.github.io/pwa-doc-scan/ (probe は `/probe/`)
+
+次のアクション:
+1. U-09 を決める(2 経路を維持するか / プレビュー解像度をどうするか)
+2. standalone(ホーム画面起動)で probe を再実施し L-4 を確認する
+3. M1 の撮影 UI と実機アダプタを実装する

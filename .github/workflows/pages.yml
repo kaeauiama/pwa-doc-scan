@@ -32,6 +32,9 @@ jobs:
           # GitHub Pages は https://<user>.github.io/<repo>/ に置かれる
           BASE_PATH: /${{ github.event.repository.name }}/
       - uses: actions/configure-pages@v5
+        with:
+          # Pages が未設定なら API 経由で有効化を試みる(UI 操作を減らすため)
+          enablement: true
       - uses: actions/upload-pages-artifact@v3
         with:
           path: dist

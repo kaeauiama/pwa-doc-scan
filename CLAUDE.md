@@ -40,11 +40,12 @@ npm run build      # dist/ を生成(GitHub Pages が使う)
 
 ## 現在地
 
-**M0 完了 / M0.5 待ち。コア(`src/core/`)は先行実装済み・テスト 15 件通過。**
+**M0 完了 / M0.5 待ち。コア(`src/core/`)は先行実装済み・テスト 23 件通過。**
 
-- 実装済み: グレースケール、積分画像、適応二値化(Sauvola / Bradley)、射影変換、
-  1bit パッキング、PNG エンコーダ、複数ページ PDF エンコーダ
-- 未実装: 撮影 UI、輪郭の自動検出(OpenCV.js)、実機アダプタ
+- 実装済み: グレースケール、積分画像、照明の平坦化、Sobel、Hough 直線変換、
+  **書類の四隅の自動検出 + 高解像度での精密化**、適応二値化(Sauvola / Bradley)、
+  射影変換、1bit パッキング、PNG エンコーダ、複数ページ PDF エンコーダ
+- 未実装: 撮影 UI、実機アダプタ
   (`LiveCameraSource` / `FileCaptureSource` / `ShareExporter` / `DownloadExporter`)
 
 次のアクション: GitHub Pages に配信し、`public/probe/index.html` を iPhone / Android 実機で

@@ -91,6 +91,24 @@
         <input type="checkbox" id="opt-whiten" checked>
         <span>背景を白く飛ばす</span>
       </label>
+      <details class="advanced" id="bw-advanced">
+        <summary>白黒2値の詳細</summary>
+        <div class="opt">
+          <span>文字の濃さ</span>
+          <input type="range" id="opt-strength" min="0" max="4" step="1" value="2" aria-label="文字の濃さ">
+        </div>
+        <div class="opt">
+          <span>二値化</span>
+          <div class="segmented" id="binarize-group" role="radiogroup" aria-label="二値化の方式">
+            <button type="button" data-binarize="sauvola" class="on">Sauvola</button>
+            <button type="button" data-binarize="bradley">Bradley</button>
+          </div>
+        </div>
+        <p class="note">
+          薄い印刷や色紙で文字が消える・潰れるときに動かしてください。
+          はっきりした原稿では見た目がほとんど変わりません。
+        </p>
+      </details>
     </div>
     <div class="controls">
       <button id="btn-full-quad" class="ghost" type="button">枠いっぱい</button>

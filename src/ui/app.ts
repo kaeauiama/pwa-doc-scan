@@ -1,6 +1,5 @@
 import { detectDocumentQuad } from "../core/detect.ts";
 import { rgbaToGray } from "../core/gray.ts";
-import { CONFIG } from "../core/config.ts";
 import { encodeOutput, fullFrameQuad, scanToPage } from "../pipeline.ts";
 import { PageCollection } from "../pages.ts";
 import { LiveCameraSource } from "../adapters/LiveCameraSource.ts";
@@ -12,8 +11,10 @@ import { CornerEditor } from "./CornerEditor.ts";
 import { bilevelToCanvas, containFit, drawQuad, rgbaToCanvas } from "./render.ts";
 import { clampQuad } from "../core/warp.ts";
 import { collectEnvironment, getFailures, isStandalone, recordFailure } from "./diagnostics.ts";
+import { loadSettings, saveSettings } from "./settings.ts";
 import type { OutputFormat, RenderMode, ScanResult } from "../pipeline.ts";
 import type { SharpnessVerdict } from "../core/sharpness.ts";
+import type { BinarizeMethod } from "../core/binarize.ts";
 import type { Quad, Rgba } from "../core/types.ts";
 
 /* ---------------- 要素 ---------------- */
@@ -66,10 +67,18 @@ let displayCanvas: HTMLCanvasElement | null = null;
 let displayScale = 1;
 let detectedQuad: Quad | null = null;
 
-let mode: RenderMode = "bilevel";
-let format: OutputFormat = "pdf";
-let dpi: number = CONFIG.output.defaultDpi;
-let whiten = true;
+const settings = loadSettings();
+let mode: RenderMode = settings.mode;
+let format: OutputFormat = settings.format;
+let dpi: number = settings.dpi;
+let whiten: boolean = settings.whiten;
+let binarizeStrength: number = settings.binarizeStrength;
+let binarizeMethod: BinarizeMethod = settings.binarizeMethod;
+
+/** 選択を端末に覚えておく。画像は一切置かない(HC-3) */
+function persist(): void {
+  saveSettings({ mode, format, dpi, whiten, binarizeStrength, binarizeMethod });
+}
 let lastOutput: { bytes: Uint8Array; mimeType: string; extension: string } | null = null;
 let lastScan: ScanResult | null = null;
 
@@ -314,7 +323,11 @@ async function process(): Promise<void> {
   try {
     const quad = scaleQuad(editor.getQuad(), 1 / displayScale);
     const started = performance.now();
-    const result = await scanToPage(captured, { mode, dpi, quad, whiten }, jpegEncoder);
+    const result = await scanToPage(
+      captured,
+      { mode, dpi, quad, whiten, binarizeMethod, binarizeStrength },
+      jpegEncoder,
+    );
     const output = await encodeOutput(result, format);
     const elapsed = Math.round(performance.now() - started);
 
@@ -552,6 +565,7 @@ function setSegmented(group: HTMLElement, value: string, attribute: string): voi
 
 function syncOptionVisibility(): void {
   $("whiten-row").hidden = mode === "bilevel";
+  $("bw-advanced").hidden = mode !== "bilevel";
 }
 
 $("btn-start").addEventListener("click", () => {
@@ -635,6 +649,7 @@ $("mode-group").addEventListener("click", (event) => {
   mode = button.dataset.mode as RenderMode;
   setSegmented($("mode-group"), mode, "mode");
   syncOptionVisibility();
+  persist();
 });
 
 $("format-group").addEventListener("click", (event) => {
@@ -642,6 +657,7 @@ $("format-group").addEventListener("click", (event) => {
   if (!button) return;
   format = button.dataset.format as OutputFormat;
   setSegmented($("format-group"), format, "format");
+  persist();
 });
 
 $("dpi-group").addEventListener("click", (event) => {
@@ -649,10 +665,25 @@ $("dpi-group").addEventListener("click", (event) => {
   if (!button) return;
   dpi = Number(button.dataset.dpi);
   setSegmented($("dpi-group"), String(dpi), "dpi");
+  persist();
 });
 
 $<HTMLInputElement>("opt-whiten").addEventListener("change", (event) => {
   whiten = (event.target as HTMLInputElement).checked;
+  persist();
+});
+
+$<HTMLInputElement>("opt-strength").addEventListener("change", (event) => {
+  binarizeStrength = Number((event.target as HTMLInputElement).value);
+  persist();
+});
+
+$("binarize-group").addEventListener("click", (event) => {
+  const button = (event.target as HTMLElement).closest<HTMLButtonElement>("button[data-binarize]");
+  if (!button) return;
+  binarizeMethod = button.dataset.binarize as BinarizeMethod;
+  setSegmented($("binarize-group"), binarizeMethod, "binarize");
+  persist();
 });
 
 $("btn-save").addEventListener("click", () => {
@@ -769,6 +800,9 @@ refreshPagesBadge();
 setSegmented($("mode-group"), mode, "mode");
 setSegmented($("format-group"), format, "format");
 setSegmented($("dpi-group"), String(dpi), "dpi");
+setSegmented($("binarize-group"), binarizeMethod, "binarize");
+$<HTMLInputElement>("opt-whiten").checked = whiten;
+$<HTMLInputElement>("opt-strength").value = String(binarizeStrength);
 syncOptionVisibility();
 show("home");
 

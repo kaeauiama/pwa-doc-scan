@@ -38,6 +38,11 @@ export interface ScanOptions {
   jpegQuality?: number;
   binarizeMethod?: BinarizeMethod;
   /**
+   * 文字の濃さ 0〜4(薄い → 濃い)。省略すると既定値。
+   * `binarizeMethod` と組み合わせて k に変換する(U-01 の実写調整用)。
+   */
+  binarizeStrength?: number;
+  /**
    * 切り出す前に四隅を内側へ詰める割合。既定 0.6%。
    * 検出した縁のわずか外側に机が入り、白飛ばしや二値化が汚れを作るのを防ぐ。
    * 0 にすると詰めない。
@@ -70,6 +75,14 @@ export const DEFAULTS = {
   jpegQuality: 0.82,
   inset: 0.006,
 } as const;
+
+/** 「文字の濃さ」の段階を、方式に応じた k に変換する。範囲外は既定に丸める。 */
+export function strengthToK(method: BinarizeMethod, strength?: number): number | undefined {
+  if (strength === undefined) return undefined;
+  const steps = CONFIG.binarize.strengthSteps[method];
+  const index = Math.max(0, Math.min(steps.length - 1, Math.round(strength)));
+  return steps[index];
+}
 
 /** 画像全体を四隅として扱う(検出に失敗したときの素直な既定) */
 export function fullFrameQuad(width: number, height: number): Quad {
@@ -151,7 +164,10 @@ export async function scanToPage(
 
   if (mode === "bilevel") {
     const warped = warpGray(gray, quad, size.width, size.height);
-    const bw = binarize(warped, { method: options.binarizeMethod });
+    const bw = binarize(warped, {
+      method: options.binarizeMethod,
+      k: strengthToK(options.binarizeMethod ?? CONFIG.binarize.method, options.binarizeStrength),
+    });
     return {
       page: bilevelPage(bw, dpi),
       processed: { kind: "bilevel", image: bw },

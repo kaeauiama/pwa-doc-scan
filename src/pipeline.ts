@@ -5,11 +5,13 @@ import { rgbaToGray } from "./core/gray.ts";
 import { bilevelPage, encodePdf, jpegPage } from "./core/pdf.ts";
 import { encodePng1bit } from "./core/png.ts";
 import { estimateOutputSize, insetQuad, warpGray, warpRgba } from "./core/warp.ts";
+import { measureSharpness } from "./core/sharpness.ts";
 import { whitenBackground } from "./core/whiten.ts";
 import type { BinarizeMethod } from "./core/binarize.ts";
 import type { DetectResult } from "./core/detect.ts";
 import type { PdfPage } from "./core/pdf.ts";
-import type { Bilevel, Quad, Rgba } from "./core/types.ts";
+import type { SharpnessResult } from "./core/sharpness.ts";
+import type { Bilevel, Point, Quad, Rgba } from "./core/types.ts";
 import type { JpegEncoder } from "./ports/JpegEncoder.ts";
 
 /** 作成物の形式(REQ-22)。PDF か、そのまま扱える画像か。 */
@@ -58,6 +60,8 @@ export interface ScanResult {
   readonly dpi: number;
   readonly outputWidth: number;
   readonly outputHeight: number;
+  /** ブレ・ピンぼけの判定(REQ-09)。撮影画像の等倍で測る */
+  readonly sharpness: SharpnessResult;
 }
 
 export const DEFAULTS = {
@@ -87,6 +91,15 @@ export function fullFrameQuad(width: number, height: number): Quad {
 export function outputSizeFor(quad: Quad, dpi: number): { width: number; height: number } {
   const a4 = paperPixels(CONFIG.paper.a4.widthMm, CONFIG.paper.a4.heightMm, dpi);
   return estimateOutputSize(quad, Math.max(a4.width, a4.height));
+}
+
+/** 四隅を含む最小の矩形 */
+function boundingBox(quad: readonly Point[]) {
+  const xs = quad.map((p) => p.x);
+  const ys = quad.map((p) => p.y);
+  const x = Math.min(...xs);
+  const y = Math.min(...ys);
+  return { x, y, width: Math.max(...xs) - x, height: Math.max(...ys) - y };
 }
 
 function toRgbaFromGray(gray: { width: number; height: number; data: Uint8Array }): Rgba {
@@ -133,6 +146,9 @@ export async function scanToPage(
 
   const size = outputSizeFor(quad, dpi);
 
+  // ブレは等倍でしか見えない。透視補正で縮小する前に、元画像の書類部分で測る
+  const sharpness = measureSharpness(gray, boundingBox(quad));
+
   if (mode === "bilevel") {
     const warped = warpGray(gray, quad, size.width, size.height);
     const bw = binarize(warped, { method: options.binarizeMethod });
@@ -145,6 +161,7 @@ export async function scanToPage(
       dpi,
       outputWidth: size.width,
       outputHeight: size.height,
+      sharpness,
     };
   }
 
@@ -168,6 +185,7 @@ export async function scanToPage(
     dpi,
     outputWidth: size.width,
     outputHeight: size.height,
+    sharpness,
   };
 }
 

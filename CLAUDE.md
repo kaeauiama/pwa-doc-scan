@@ -56,6 +56,7 @@ npm run build      # dist/ を生成(GitHub Pages が使う)
   `ShareExporter` / `DownloadExporter`
 - UI: `src/ui/`。ホーム / 撮影 / 四隅調整 / 結果 / 診断 の 5 画面。
   ライブ輪郭オーバーレイ、四隅のドラッグ調整、モード・DPI 切替、torch、ページ一覧、
+  ブレ検出の警告、
   共有シートとダウンロード、理由コード付きの失敗表示、PDF / 画像の切替
 - 撮り溜め: `src/pages.ts` の `PageCollection`。**端末に保存せずメモリ上だけで束ねる**
   (D-035)。保持中は白黒2値を圧縮済みで持つ(D-036)
@@ -67,5 +68,5 @@ npm run build      # dist/ を生成(GitHub Pages が使う)
 
 公開先: https://kaeauiama.github.io/pwa-doc-scan/ (probe は `/probe/`)
 
-次のアクション: **M2**(オートキャプチャ REQ-08 / ブレ検出 REQ-09)。
-実使用で二値化の閾値(U-01)と既定 DPI(U-03)を詰める。
+次のアクション: 実使用で二値化の閾値(U-01)・既定 DPI(U-03)・
+ブレ判定の閾値(U-13)を詰める。オートキャプチャ(REQ-08)は保留。

@@ -13,6 +13,7 @@ import { bilevelToCanvas, containFit, drawQuad, rgbaToCanvas } from "./render.ts
 import { clampQuad } from "../core/warp.ts";
 import { collectEnvironment, getFailures, isStandalone, recordFailure } from "./diagnostics.ts";
 import type { OutputFormat, RenderMode, ScanResult } from "../pipeline.ts";
+import type { SharpnessVerdict } from "../core/sharpness.ts";
 import type { Quad, Rgba } from "../core/types.ts";
 
 /* ---------------- 要素 ---------------- */
@@ -78,6 +79,8 @@ let lastScan: ScanResult | null = null;
  */
 const pages = new PageCollection();
 const thumbnails = new Map<string, string>();
+/** ページごとのブレ判定。表示のためだけなので PageCollection には持たせない */
+const pageSharpness = new Map<string, SharpnessVerdict>();
 
 /* ---------------- 小物 ---------------- */
 
@@ -290,6 +293,20 @@ function scaleQuad(quad: Quad, scale: number): Quad {
 
 /* ---------------- 処理と保存 ---------------- */
 
+const SHARPNESS_LABEL: Record<SharpnessVerdict, string> = {
+  sharp: "良好",
+  soft: "やや甘い",
+  blurry: "ブレている",
+  unknown: "判定できず",
+};
+
+const MODE_LABEL: Record<RenderMode, string> = {
+  bilevel: "白黒2値",
+  grayscale: "グレースケール",
+  color: "カラー",
+};
+
+
 async function process(): Promise<void> {
   if (!captured || !editor) return;
   setBusy(true, "PDF を作っています…");
@@ -307,18 +324,26 @@ async function process(): Promise<void> {
     if (result.processed.kind === "bilevel") bilevelToCanvas(result.processed.image, resultCanvas);
     else rgbaToCanvas(result.processed.image, resultCanvas);
 
-    const modeLabel: Record<RenderMode, string> = {
-      bilevel: "白黒2値",
-      grayscale: "グレースケール",
-      color: "カラー",
-    };
+    const sharp = result.sharpness;
     fillTable($<HTMLTableElement>("result-info"), {
       形式: output.label,
-      出力: `${modeLabel[result.mode]} / ${result.dpi}dpi`,
+      出力: `${MODE_LABEL[result.mode]} / ${result.dpi}dpi`,
       サイズ: `${(output.bytes.length / 1024).toFixed(1)} KB`,
       画素数: `${result.outputWidth} x ${result.outputHeight}`,
+      鮮明さ: `${SHARPNESS_LABEL[sharp.verdict]}(${sharp.score.toFixed(2)})`,
       処理時間: `${elapsed} ms`,
     });
+
+    const warning = $("result-warning");
+    if (sharp.verdict === "blurry") {
+      warning.textContent = "ブレているか、ピントが合っていないようです。撮り直すと読みやすくなります。";
+      warning.hidden = false;
+    } else if (sharp.verdict === "soft") {
+      warning.textContent = "少し甘い写りです。文字が細かい書類なら撮り直しをおすすめします。";
+      warning.hidden = false;
+    } else {
+      warning.hidden = true;
+    }
     show("result");
   } catch (err) {
     fail("PDF 作成", err);
@@ -363,12 +388,6 @@ async function exportBytes(
 }
 
 /* ---------------- 撮り溜め(REQ-10) ---------------- */
-
-const MODE_LABEL: Record<RenderMode, string> = {
-  bilevel: "白黒2値",
-  grayscale: "グレースケール",
-  color: "カラー",
-};
 
 function refreshPagesBadge(): void {
   const button = $("nav-pages");
@@ -423,6 +442,15 @@ function renderPageList(): void {
     const detail = document.createElement("span");
     detail.textContent = `${item.meta.width} x ${item.meta.height} / 約 ${(item.meta.byteSize / 1024).toFixed(0)} KB`;
     meta.append(title, detail);
+
+    // 何枚も溜めた後で「1 枚ブレていた」に気づけるよう、一覧にも出す
+    const verdict = pageSharpness.get(item.id);
+    if (verdict === "blurry" || verdict === "soft") {
+      const flag = document.createElement("span");
+      flag.className = "flag";
+      flag.textContent = verdict === "blurry" ? "ブレている可能性" : "やや甘い";
+      meta.append(flag);
+    }
     li.append(meta);
 
     const ops = document.createElement("div");
@@ -452,6 +480,7 @@ function renderPageList(): void {
     remove.addEventListener("click", () => {
       pages.remove(item.id);
       thumbnails.delete(item.id);
+      pageSharpness.delete(item.id);
       refreshPagesBadge();
       renderPageList();
     });
@@ -471,6 +500,7 @@ async function addCurrentPage(): Promise<void> {
     lastScan.outputHeight,
   );
   thumbnails.set(id, makeThumbnail());
+  pageSharpness.set(id, lastScan.sharpness.verdict);
   refreshPagesBadge();
   say(`${pages.size} ページ目として追加しました。`);
 
@@ -500,6 +530,7 @@ async function savePages(): Promise<void> {
       // 保存できたページは持ち続けない。端末に溜め込まない方針(D-005)を保つ
       pages.clear();
       thumbnails.clear();
+      pageSharpness.clear();
       refreshPagesBadge();
       renderPageList();
       show("home");
@@ -658,6 +689,7 @@ $("btn-pages-clear").addEventListener("click", () => {
   if (!confirm(`${pages.size} ページをすべて破棄します。よろしいですか?`)) return;
   pages.clear();
   thumbnails.clear();
+  pageSharpness.clear();
   refreshPagesBadge();
   renderPageList();
   say("すべて破棄しました。");

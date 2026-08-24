@@ -1,0 +1,548 @@
+<!doctype html>
+<html lang="ja">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
+<title>pwa-doc-scan M0.5 実機計測</title>
+<style>
+  :root { color-scheme: light dark; --bg:#fff; --fg:#111; --mut:#666; --line:#ddd; --ok:#0a7; --ng:#c33; --card:#f7f7f8; }
+  @media (prefers-color-scheme: dark) { :root { --bg:#121214; --fg:#eee; --mut:#999; --line:#333; --card:#1c1c20; } }
+  * { box-sizing: border-box; }
+  body { margin:0; padding:12px; font:14px/1.6 -apple-system,BlinkMacSystemFont,"Hiragino Sans","Noto Sans JP",sans-serif; background:var(--bg); color:var(--fg); }
+  h1 { font-size:17px; margin:0 0 4px; }
+  h2 { font-size:14px; margin:20px 0 6px; padding-bottom:4px; border-bottom:1px solid var(--line); }
+  p.lead { color:var(--mut); margin:0 0 12px; font-size:12px; }
+  button { font:inherit; padding:9px 14px; border-radius:8px; border:1px solid var(--line); background:var(--card); color:var(--fg); margin:0 6px 6px 0; }
+  button:disabled { opacity:.45; }
+  button.primary { background:var(--fg); color:var(--bg); border-color:var(--fg); }
+  table { width:100%; border-collapse:collapse; font-size:12px; margin:6px 0; }
+  th,td { text-align:left; padding:5px 6px; border-bottom:1px solid var(--line); vertical-align:top; word-break:break-word; }
+  th { color:var(--mut); font-weight:600; width:42%; }
+  .ok{color:var(--ok)} .ng{color:var(--ng)}
+  video { width:100%; max-height:38vh; background:#000; border-radius:8px; object-fit:contain; }
+  canvas { width:100%; max-height:38vh; object-fit:contain; background:#fff; border-radius:8px; }
+  pre { background:var(--card); padding:10px; border-radius:8px; overflow:auto; font-size:11px; max-height:40vh; }
+  .card { background:var(--card); border-radius:10px; padding:10px 12px; margin:8px 0; }
+  label { display:inline-block; margin:0 6px 6px 0; }
+</style>
+</head>
+<body>
+
+<h1>pwa-doc-scan — M0.5 実機能力計測</h1>
+<p class="lead">
+iPhone / Android の実機で開き、上から順に実行してください。最後に「結果をコピー」で全結果を
+Markdown で取得できます。<b>HTTPS(または localhost)でないとカメラは動きません。</b>
+</p>
+
+<div class="card">
+  <b>推奨:</b> Safari で開いて 1 周 → 「共有 → ホーム画面に追加」して standalone でもう 1 周。
+  L-4(standalone でカメラ権限が毎回聞かれる/黒画面)の確認になります。
+</div>
+
+<h2>0. 環境</h2>
+<table id="t-env"></table>
+
+<h2>1. API サポート</h2>
+<table id="t-api"></table>
+
+<h2>2. getUserMedia 解像度ラダー(最重要)</h2>
+<p class="lead">各要求解像度に対して実際に得られた値を測ります。カメラ権限を求められます。</p>
+<button id="b-ladder" class="primary">解像度ラダーを実行</button>
+<table id="t-ladder"></table>
+
+<h2>3. カメラの capabilities</h2>
+<button id="b-caps">capabilities を取得</button>
+<pre id="p-caps">(未実行)</pre>
+
+<h2>4. ライブ映像 → 二値化 → PDF(無音モード)</h2>
+<p class="lead">実際のパイプラインを実機で通し、所要時間と出力バイト数を測ります。</p>
+<video id="vid" playsinline muted autoplay></video>
+<div>
+  <button id="b-start">カメラ開始(最大解像度)</button>
+  <button id="b-shot" disabled>フレーム取得 → 処理</button>
+  <button id="b-stop" disabled>停止</button>
+</div>
+<label>出力DPI <select id="sel-dpi"><option>150</option><option selected>200</option><option>300</option></select></label>
+<canvas id="cv"></canvas>
+<table id="t-pipe"></table>
+<div>
+  <button id="b-share" disabled>生成PDFを共有シートで書き出し</button>
+  <button id="b-dl" disabled>生成PDFを download で保存</button>
+</div>
+
+<h2>5. system camera(高画質モード)</h2>
+<p class="lead">
+<code>&lt;input capture&gt;</code> が実際に返す静止画の解像度を測ります。
+<b>日本版 iPhone ではここでシャッター音が鳴ります</b>(それ自体が確認項目です)。
+</p>
+<input type="file" id="f-cap" accept="image/*" capture="environment">
+<table id="t-cap"></table>
+
+<h2>結果</h2>
+<button id="b-copy" class="primary">結果をコピー(Markdown)</button>
+<pre id="p-out">(まだ結果がありません)</pre>
+
+<script>
+"use strict";
+
+const R = {};                      // 収集した全結果
+const $ = (s) => document.querySelector(s);
+const enc = new TextEncoder();
+
+function rows(tableSel, obj) {
+  const t = $(tableSel);
+  t.innerHTML = "";
+  for (const [k, v] of Object.entries(obj)) {
+    const tr = document.createElement("tr");
+    const th = document.createElement("th"); th.textContent = k;
+    const td = document.createElement("td");
+    if (v === true)       { td.textContent = "対応"; td.className = "ok"; }
+    else if (v === false) { td.textContent = "非対応"; td.className = "ng"; }
+    else                  { td.textContent = String(v); }
+    tr.append(th, td); t.append(tr);
+  }
+}
+
+/* ---------- 0. 環境 ---------- */
+const standalone = window.matchMedia("(display-mode: standalone)").matches
+  || window.navigator.standalone === true;
+R.env = {
+  "UA": navigator.userAgent,
+  "secure context": window.isSecureContext,
+  "standalone で起動": standalone,
+  "display-mode": ["standalone","fullscreen","minimal-ui","browser"]
+      .find((m) => matchMedia("(display-mode: " + m + ")").matches) || "?",
+  "画面 (CSS px)": screen.width + "x" + screen.height + " @dpr " + devicePixelRatio,
+  "論理コア数": navigator.hardwareConcurrency || "?",
+  "端末メモリ (GB)": navigator.deviceMemory || "非公開",
+};
+rows("#t-env", R.env);
+
+/* ---------- 1. API サポート ---------- */
+function hasWebGL2() {
+  try { return !!document.createElement("canvas").getContext("webgl2"); }
+  catch (e) { return false; }
+}
+function hasWasmSimd() {
+  try {
+    return WebAssembly.validate(new Uint8Array([
+      0,97,115,109,1,0,0,0, 1,5,1,96,0,1,123, 3,2,1,0,
+      10,10,1,8,0,65,0,253,17,253,186,1,11
+    ]));
+  } catch (e) { return false; }
+}
+function hasCompressionStream() {
+  try { new CompressionStream("deflate"); return true; } catch (e) { return false; }
+}
+function hasShareFiles() {
+  try {
+    const f = new File([new Uint8Array([1])], "a.pdf", { type: "application/pdf" });
+    return navigator.canShare ? navigator.canShare({ files: [f] }) : false;
+  } catch (e) { return false; }
+}
+async function canEncode(type) {
+  try {
+    const c = document.createElement("canvas"); c.width = c.height = 8;
+    c.getContext("2d").fillRect(0, 0, 8, 8);
+    const b = await new Promise((res) => c.toBlob(res, type));
+    return b ? b.type === type : false;
+  } catch (e) { return false; }
+}
+
+(async () => {
+  R.api = {
+    "getUserMedia": !!(navigator.mediaDevices && navigator.mediaDevices.getUserMedia),
+    "ImageCapture": typeof window.ImageCapture !== "undefined",
+    "OffscreenCanvas": typeof OffscreenCanvas !== "undefined",
+    "createImageBitmap": typeof createImageBitmap === "function",
+    "CompressionStream deflate": hasCompressionStream(),
+    "WebGL2": hasWebGL2(),
+    "WebAssembly SIMD": hasWasmSimd(),
+    "navigator.share": typeof navigator.share === "function",
+    "canShare files": hasShareFiles(),
+    "OPFS storage.getDirectory": !!(navigator.storage && typeof navigator.storage.getDirectory === "function"),
+    "storage.persist": !!(navigator.storage && typeof navigator.storage.persist === "function"),
+    "showSaveFilePicker": typeof window.showSaveFilePicker === "function",
+    "Service Worker": "serviceWorker" in navigator,
+    "toBlob image/webp": await canEncode("image/webp"),
+    "toBlob image/jpeg": await canEncode("image/jpeg"),
+  };
+  try {
+    if (navigator.storage && navigator.storage.estimate) {
+      const est = await navigator.storage.estimate();
+      if (est && est.quota) R.api["storage quota (MB)"] = Math.round(est.quota / 1048576);
+    }
+  } catch (e) { /* noop */ }
+  rows("#t-api", R.api);
+  dump();
+})();
+
+/* ---------- 2. 解像度ラダー ---------- */
+const LADDER = [
+  ["720p",   1280,  720],
+  ["1080p",  1920, 1080],
+  ["1440p",  2560, 1440],
+  ["4K",     3840, 2160],
+  ["最大要求", 99999, 99999],
+];
+
+const A4_SHORT_INCH = 210 / 25.4;   // A4 短辺 210mm
+
+$("#b-ladder").onclick = async (ev) => {
+  ev.target.disabled = true;
+  R.ladder = {};
+  for (const entry of LADDER) {
+    const name = entry[0], w = entry[1], h = entry[2];
+    let s = null;
+    try {
+      s = await navigator.mediaDevices.getUserMedia({
+        audio: false,
+        video: { facingMode: { ideal: "environment" }, width: { ideal: w }, height: { ideal: h } },
+      });
+      const st = s.getVideoTracks()[0].getSettings();
+      const mp = (st.width * st.height / 1e6).toFixed(1);
+      const dpi = Math.round(Math.min(st.width, st.height) / A4_SHORT_INCH);
+      R.ladder[name + " (" + w + "x" + h + " ideal)"] =
+        st.width + "x" + st.height + " / " + mp + "MP / " + (st.frameRate || "?") +
+        "fps / A4実効 " + dpi + "dpi / " + (st.facingMode || "?");
+    } catch (err) {
+      R.ladder[name + " (" + w + "x" + h + " ideal)"] = "失敗: " + err.name + " " + err.message;
+    } finally {
+      if (s) s.getTracks().forEach((t) => t.stop());
+    }
+    rows("#t-ladder", R.ladder);
+  }
+  dump();
+  ev.target.disabled = false;
+};
+
+/* ---------- 3. capabilities ---------- */
+$("#b-caps").onclick = async () => {
+  let s = null;
+  try {
+    s = await navigator.mediaDevices.getUserMedia({
+      audio: false, video: { facingMode: { ideal: "environment" } } });
+    const tr = s.getVideoTracks()[0];
+    const caps = tr.getCapabilities ? tr.getCapabilities() : "getCapabilities 非対応";
+    const devs = (await navigator.mediaDevices.enumerateDevices())
+      .filter((d) => d.kind === "videoinput")
+      .map((d) => ({ label: d.label || "(ラベル非開示)", id: d.deviceId.slice(0, 12) + "..." }));
+    R.caps = { capabilities: caps, settings: tr.getSettings(), videoinputs: devs };
+  } catch (err) {
+    R.caps = { error: err.name + ": " + err.message };
+  } finally {
+    if (s) s.getTracks().forEach((t) => t.stop());
+  }
+  $("#p-caps").textContent = JSON.stringify(R.caps, null, 2);
+  dump();
+};
+
+/* ---------- 4. パイプライン ---------- */
+
+/* CRC32(PNG 用) */
+const CRC_TABLE = (() => {
+  const t = new Uint32Array(256);
+  for (let n = 0; n < 256; n++) {
+    let c = n;
+    for (let k = 0; k < 8; k++) c = (c & 1) ? (0xEDB88320 ^ (c >>> 1)) : (c >>> 1);
+    t[n] = c >>> 0;
+  }
+  return t;
+})();
+function crc32(buf) {
+  let c = 0xFFFFFFFF;
+  for (let i = 0; i < buf.length; i++) c = CRC_TABLE[(c ^ buf[i]) & 0xFF] ^ (c >>> 8);
+  return (c ^ 0xFFFFFFFF) >>> 0;
+}
+
+/* zlib(RFC1950)ラップ付き deflate。PNG の IDAT / PDF の FlateDecode に共通で使える */
+async function deflate(u8) {
+  const cs = new CompressionStream("deflate");
+  const stream = new Blob([u8]).stream().pipeThrough(cs);
+  return new Uint8Array(await new Response(stream).arrayBuffer());
+}
+
+function concat(parts) {
+  let n = 0;
+  for (const p of parts) n += p.length;
+  const out = new Uint8Array(n);
+  let o = 0;
+  for (const p of parts) { out.set(p, o); o += p.length; }
+  return out;
+}
+
+/* RGBA → グレースケール(輝度) */
+function toGray(rgba, w, h) {
+  const g = new Uint8Array(w * h);
+  for (let i = 0, j = 0; j < g.length; i += 4, j++) {
+    g[j] = (rgba[i] * 77 + rgba[i + 1] * 150 + rgba[i + 2] * 29) >> 8;
+  }
+  return g;
+}
+
+/* 積分画像による局所平均しきい値(Sauvola の簡易版。M1 で本実装に差し替える) */
+function binarize(gray, w, h, k) {
+  if (k === undefined) k = 0.15;
+  const win = (Math.max(15, Math.floor(Math.max(w, h) / 16)) | 1);
+  const r = win >> 1;
+  const iw = w + 1;
+  const integ = new Uint32Array(iw * (h + 1));
+  for (let y = 0; y < h; y++) {
+    let rowsum = 0;
+    for (let x = 0; x < w; x++) {
+      rowsum += gray[y * w + x];
+      integ[(y + 1) * iw + (x + 1)] = integ[y * iw + (x + 1)] + rowsum;
+    }
+  }
+  const out = new Uint8Array(w * h);       // 1 = 白, 0 = 黒
+  for (let y = 0; y < h; y++) {
+    const y0 = Math.max(0, y - r), y1 = Math.min(h - 1, y + r);
+    for (let x = 0; x < w; x++) {
+      const x0 = Math.max(0, x - r), x1 = Math.min(w - 1, x + r);
+      const area = (y1 - y0 + 1) * (x1 - x0 + 1);
+      const sum = integ[(y1 + 1) * iw + (x1 + 1)] - integ[y0 * iw + (x1 + 1)]
+                - integ[(y1 + 1) * iw + x0]       + integ[y0 * iw + x0];
+      const mean = sum / area;
+      out[y * w + x] = gray[y * w + x] > mean * (1 - k) ? 1 : 0;
+    }
+  }
+  return out;
+}
+
+/* 1bit を MSB 先頭で行ごとにパック。PNG も PDF もこの並び */
+function packBits(bits, w, h, filterByte) {
+  const rowBytes = (w + 7) >> 3;
+  const stride = rowBytes + (filterByte ? 1 : 0);
+  const out = new Uint8Array(stride * h);
+  for (let y = 0; y < h; y++) {
+    const base = y * stride + (filterByte ? 1 : 0);
+    for (let x = 0; x < w; x++) {
+      if (bits[y * w + x]) out[base + (x >> 3)] |= 0x80 >> (x & 7);
+    }
+  }
+  return out;
+}
+
+function pngChunk(type, data) {
+  const out = new Uint8Array(12 + data.length);
+  const dv = new DataView(out.buffer);
+  dv.setUint32(0, data.length);
+  out.set(enc.encode(type), 4);
+  out.set(data, 8);
+  dv.setUint32(8 + data.length, crc32(out.subarray(4, 8 + data.length)));
+  return out;
+}
+
+async function encodePng1bit(bits, w, h) {
+  const ihdr = new Uint8Array(13);
+  const dv = new DataView(ihdr.buffer);
+  dv.setUint32(0, w); dv.setUint32(4, h);
+  ihdr[8] = 1;   // bit depth
+  ihdr[9] = 0;   // color type: grayscale
+  const idat = await deflate(packBits(bits, w, h, true));
+  return concat([
+    new Uint8Array([137, 80, 78, 71, 13, 10, 26, 10]),
+    pngChunk("IHDR", ihdr),
+    pngChunk("IDAT", idat),
+    pngChunk("IEND", new Uint8Array(0)),
+  ]);
+}
+
+async function encodePdf1bit(bits, w, h, dpi) {
+  const img = await deflate(packBits(bits, w, h, false));
+  const wpt = (w / dpi) * 72, hpt = (h / dpi) * 72;
+  const parts = [];
+  let len = 0;
+  const push = (u8) => { parts.push(u8); len += u8.length; };
+  const s = (str) => push(enc.encode(str));
+  const off = [];
+  s("%PDF-1.4\n");
+  off[1] = len; s("1 0 obj\n<< /Type /Catalog /Pages 2 0 R >>\nendobj\n");
+  off[2] = len; s("2 0 obj\n<< /Type /Pages /Kids [3 0 R] /Count 1 >>\nendobj\n");
+  off[3] = len;
+  s("3 0 obj\n<< /Type /Page /Parent 2 0 R /MediaBox [0 0 " + wpt.toFixed(2) + " " + hpt.toFixed(2) + "]" +
+    " /Resources << /XObject << /Im0 4 0 R >> >> /Contents 5 0 R >>\nendobj\n");
+  off[4] = len;
+  s("4 0 obj\n<< /Type /XObject /Subtype /Image /Width " + w + " /Height " + h +
+    " /ColorSpace /DeviceGray /BitsPerComponent 1 /Filter /FlateDecode /Length " + img.length + " >>\nstream\n");
+  push(img);
+  s("\nendstream\nendobj\n");
+  const content = "q " + wpt.toFixed(2) + " 0 0 " + hpt.toFixed(2) + " 0 0 cm /Im0 Do Q\n";
+  off[5] = len;
+  s("5 0 obj\n<< /Length " + content.length + " >>\nstream\n" + content + "endstream\nendobj\n");
+  const xrefPos = len;
+  let xref = "xref\n0 6\n0000000000 65535 f \n";
+  for (let i = 1; i <= 5; i++) xref += String(off[i]).padStart(10, "0") + " 00000 n \n";
+  s(xref);
+  s("trailer\n<< /Size 6 /Root 1 0 R >>\nstartxref\n" + xrefPos + "\n%%EOF\n");
+  return concat(parts);
+}
+
+let stream = null, lastPdf = null;
+
+$("#b-start").onclick = async () => {
+  try {
+    stream = await navigator.mediaDevices.getUserMedia({
+      audio: false,
+      video: { facingMode: { ideal: "environment" }, width: { ideal: 99999 }, height: { ideal: 99999 } },
+    });
+    $("#vid").srcObject = stream;
+    await $("#vid").play();
+    $("#b-shot").disabled = false;
+    $("#b-stop").disabled = false;
+    const st = stream.getVideoTracks()[0].getSettings();
+    R.live = { "ストリーム解像度": st.width + "x" + st.height };
+    rows("#t-pipe", R.live);
+    dump();
+  } catch (err) {
+    alert("カメラ開始に失敗: " + err.name + " " + err.message);
+  }
+};
+
+$("#b-stop").onclick = () => {
+  if (stream) stream.getTracks().forEach((t) => t.stop());
+  stream = null;
+  $("#b-shot").disabled = true;
+  $("#b-stop").disabled = true;
+};
+
+async function runPipeline(source, sw, sh, label) {
+  const dpi = parseInt($("#sel-dpi").value, 10);
+  const cv = $("#cv");
+  cv.width = sw; cv.height = sh;
+  const ctx = cv.getContext("2d", { willReadFrequently: true });
+
+  const t0 = performance.now();
+  ctx.drawImage(source, 0, 0, sw, sh);
+  const rgba = ctx.getImageData(0, 0, sw, sh).data;
+  const t1 = performance.now();
+
+  const gray = toGray(rgba, sw, sh);
+  const t2 = performance.now();
+  const bits = binarize(gray, sw, sh);
+  const t3 = performance.now();
+
+  const png = await encodePng1bit(bits, sw, sh);
+  const t4 = performance.now();
+  const pdf = await encodePdf1bit(bits, sw, sh, dpi);
+  const t5 = performance.now();
+
+  // 二値化結果をプレビューに描き戻す
+  const out = ctx.createImageData(sw, sh);
+  for (let i = 0, j = 0; i < bits.length; i++, j += 4) {
+    const v = bits[i] ? 255 : 0;
+    out.data[j] = v; out.data[j + 1] = v; out.data[j + 2] = v; out.data[j + 3] = 255;
+  }
+  ctx.putImageData(out, 0, 0);
+
+  lastPdf = new File([pdf], "scan-probe.pdf", { type: "application/pdf" });
+  $("#b-share").disabled = !(navigator.canShare && navigator.canShare({ files: [lastPdf] }));
+  $("#b-dl").disabled = false;
+
+  const kb = (n) => (n / 1024).toFixed(1) + " KB";
+  const ms = (a, b) => (b - a).toFixed(0) + " ms";
+  const res = {
+    "入力解像度": sw + "x" + sh + " (" + (sw * sh / 1e6).toFixed(1) + "MP)",
+    "A4短辺換算 実効dpi": Math.round(Math.min(sw, sh) / A4_SHORT_INCH),
+    "出力DPI指定": dpi,
+    "1) 取り込み+getImageData": ms(t0, t1),
+    "2) グレースケール": ms(t1, t2),
+    "3) 適応二値化": ms(t2, t3),
+    "4) 1bit PNG エンコード": ms(t3, t4),
+    "5) 1bit PDF エンコード": ms(t4, t5),
+    "合計": ms(t0, t5),
+    "1bit PNG サイズ": kb(png.length),
+    "1bit PDF サイズ": kb(pdf.length),
+  };
+  R["pipeline_" + label] = res;
+  rows("#t-pipe", res);
+  dump();
+}
+
+$("#b-shot").onclick = async (ev) => {
+  ev.target.disabled = true;
+  try {
+    const v = $("#vid");
+    await runPipeline(v, v.videoWidth, v.videoHeight, "getUserMedia");
+  } catch (err) {
+    alert("処理に失敗: " + err.message);
+  }
+  ev.target.disabled = false;
+};
+
+$("#b-share").onclick = async () => {
+  try {
+    await navigator.share({ files: [lastPdf], title: "scan-probe.pdf" });
+    R.shareResult = "成功";
+  } catch (err) {
+    R.shareResult = "失敗: " + err.name + " " + err.message;
+  }
+  dump();
+};
+
+$("#b-dl").onclick = () => {
+  const url = URL.createObjectURL(lastPdf);
+  const a = document.createElement("a");
+  a.href = url; a.download = "scan-probe.pdf";
+  document.body.append(a); a.click(); a.remove();
+  setTimeout(() => URL.revokeObjectURL(url), 10000);
+  R.downloadAttempted = "実行した(保存できたか目視で確認)";
+  dump();
+};
+
+/* ---------- 5. system camera ---------- */
+$("#f-cap").onchange = async (ev) => {
+  const f = ev.target.files && ev.target.files[0];
+  if (!f) return;
+  const bmp = await createImageBitmap(f);
+  R.systemCamera = {
+    "ファイル名": f.name,
+    "MIME": f.type,
+    "元ファイルサイズ": (f.size / 1048576).toFixed(2) + " MB",
+    "解像度": bmp.width + "x" + bmp.height + " (" + (bmp.width * bmp.height / 1e6).toFixed(1) + "MP)",
+    "A4短辺換算 実効dpi": Math.round(Math.min(bmp.width, bmp.height) / A4_SHORT_INCH),
+  };
+  rows("#t-cap", R.systemCamera);
+  dump();
+  if (confirm("この静止画でも二値化→PDF を実行しますか?(高解像度だと数秒かかります)")) {
+    await runPipeline(bmp, bmp.width, bmp.height, "systemCamera");
+  }
+  if (bmp.close) bmp.close();
+};
+
+/* ---------- 結果出力 ---------- */
+function toMarkdown() {
+  let md = "# pwa-doc-scan M0.5 計測結果\n\n";
+  md += "計測日: " + new Date().toISOString().slice(0, 10) + "\n\n";
+  for (const section of Object.keys(R)) {
+    const val = R[section];
+    md += "## " + section + "\n\n";
+    if (val && typeof val === "object" && !Array.isArray(val)) {
+      const flat = Object.keys(val).every((k) => typeof val[k] !== "object");
+      if (flat) {
+        md += "| 項目 | 値 |\n|---|---|\n";
+        for (const k of Object.keys(val)) md += "| " + k + " | " + val[k] + " |\n";
+      } else {
+        md += "```json\n" + JSON.stringify(val, null, 2) + "\n```\n";
+      }
+    } else {
+      md += String(val) + "\n";
+    }
+    md += "\n";
+  }
+  return md;
+}
+function dump() { $("#p-out").textContent = toMarkdown(); }
+
+$("#b-copy").onclick = async () => {
+  const md = toMarkdown();
+  try {
+    await navigator.clipboard.writeText(md);
+    alert("コピーしました");
+  } catch (e) {
+    alert("クリップボードに書けませんでした。下のテキストを手動で選択してください。");
+  }
+};
+</script>
+</body>
+</html>

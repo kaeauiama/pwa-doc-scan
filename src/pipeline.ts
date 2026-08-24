@@ -196,10 +196,15 @@ export async function encodeOutput(result: ScanResult, format: OutputFormat): Pr
       label: "JPEG 画像",
     };
   }
-  return {
-    bytes: await encodePng1bit(result.page.image.image, result.dpi),
-    mimeType: "image/png",
-    extension: "png",
-    label: "PNG 画像(1bit)",
-  };
+  if (result.page.image.kind === "bilevel") {
+    return {
+      bytes: await encodePng1bit(result.page.image.image, result.dpi),
+      mimeType: "image/png",
+      extension: "png",
+      label: "PNG 画像(1bit)",
+    };
+  }
+  // 圧縮済みのページ(compactPage 済み)からは PNG を組み直せない。
+  // PNG は行ごとにフィルタバイトが要るため、PDF 用の圧縮結果を流用できない。
+  throw new Error("圧縮済みのページは画像として書き出せません。PDF を選んでください。");
 }

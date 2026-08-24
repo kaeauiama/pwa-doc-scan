@@ -10,6 +10,9 @@ const PT_PER_INCH = 72;
  * PDF に埋める画像。
  *
  * - `bilevel` : 1bit + FlateDecode。書類の白黒2値。A4 200dpi で 40〜50KB
+ * - `bilevel-flate` : 上を圧縮済みにしたもの。複数ページを保持するときに使う。
+ *   生の Bilevel は 1 画素 1 バイトで A4 200dpi 1 枚が約 3.9MB あり、
+ *   何枚も抱えると端末が落ちる。圧縮済みなら 1 枚 40〜50KB で済む
  * - `jpeg`    : エンコード済みの JPEG を `/DCTDecode` でそのまま埋める。
  *               カラー / グレースケール用(D-026)。
  *
@@ -18,6 +21,13 @@ const PT_PER_INCH = 72;
  */
 export type PdfImage =
   | { readonly kind: "bilevel"; readonly image: Bilevel }
+  | {
+      readonly kind: "bilevel-flate";
+      /** packBits + zlib deflate 済みのバイト列 */
+      readonly bytes: Uint8Array;
+      readonly width: number;
+      readonly height: number;
+    }
   | {
       readonly kind: "jpeg";
       readonly bytes: Uint8Array;
@@ -40,6 +50,24 @@ export function bilevelPage(image: Bilevel, dpi?: number): PdfPage {
   return { image: { kind: "bilevel", image }, dpi };
 }
 
+/**
+ * ページを保持しやすい形にする。白黒2値だけが対象で、それ以外はそのまま返す。
+ * 出来上がる PDF のバイト列は変換前と完全に同じになる。
+ */
+export async function compactPage(page: PdfPage): Promise<PdfPage> {
+  if (page.image.kind !== "bilevel") return page;
+  const image = page.image.image;
+  return {
+    image: {
+      kind: "bilevel-flate",
+      bytes: await deflateZlib(packBits(image, false)),
+      width: image.width,
+      height: image.height,
+    },
+    dpi: page.dpi,
+  };
+}
+
 export function jpegPage(
   bytes: Uint8Array,
   width: number,
@@ -60,6 +88,16 @@ interface EncodedImage {
 }
 
 async function prepare(image: PdfImage): Promise<EncodedImage> {
+  if (image.kind === "bilevel-flate") {
+    return {
+      width: image.width,
+      height: image.height,
+      bytes: image.bytes,
+      filter: "/FlateDecode",
+      colorSpace: "/DeviceGray",
+      bitsPerComponent: 1,
+    };
+  }
   if (image.kind === "bilevel") {
     return {
       width: image.image.width,

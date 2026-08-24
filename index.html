@@ -16,7 +16,10 @@
 
 <header class="bar">
   <h1>pwa-doc-scan</h1>
-  <button id="nav-diag" class="ghost" type="button" aria-label="診断">診断</button>
+  <div class="bar-actions">
+    <button id="nav-pages" class="ghost" type="button" hidden>ページ <span id="pages-count">0</span></button>
+    <button id="nav-diag" class="ghost" type="button" aria-label="診断">診断</button>
+  </div>
 </header>
 
 <main>
@@ -110,8 +113,30 @@
       <button id="btn-download" class="ghost" type="button">ダウンロード</button>
     </div>
     <div class="controls">
+      <button id="btn-add-page" class="ghost" type="button">ページに追加して続ける</button>
+    </div>
+    <div class="controls">
       <button id="btn-back-adjust" class="ghost" type="button">四隅とモードを直す</button>
       <button id="btn-home" class="ghost" type="button">最初から</button>
+    </div>
+  </section>
+
+  <!-- 撮り溜めたページ -->
+  <section id="view-pages" class="view" hidden>
+    <div class="card">
+      <p class="lead" id="pages-summary"></p>
+    </div>
+    <ol class="pagelist" id="page-list"></ol>
+    <p class="note">
+      ページは<b>この画面を開いている間だけ</b>メモリ上に保持しています。端末には保存しません。
+      アプリを閉じたり再読み込みすると消えるので、まとめ終わったら保存してください。
+    </p>
+    <div class="controls">
+      <button id="btn-pages-add-more" class="ghost" type="button">続けて撮る</button>
+      <button id="btn-pages-clear" class="ghost" type="button">すべて破棄</button>
+    </div>
+    <div class="controls sticky">
+      <button id="btn-pages-save" class="primary big" type="button">まとめて PDF を保存</button>
     </div>
   </section>
 

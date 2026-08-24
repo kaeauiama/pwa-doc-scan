@@ -40,8 +40,8 @@ npm run build      # dist/ を生成(GitHub Pages が使う)
 
 ## 現在地
 
-**M0 / M0.5 / M1 完了。実機でライブ検出・PDF 化・共有シート・機内モードを確認済み。
-テスト 46 件通過。**
+**M0 / M0.5 / M1 / M3(REQ-10)完了。実機でライブ検出・PDF 化・共有シート・機内モードを確認済み。
+テスト 54 件通過。**
 
 実機計測で机上の前提が覆った(D-017 / D-025)。`getUserMedia` は **4032x3024 /
 12.2MP / A4 実効 366dpi** を **30fps・発熱なし**で返し、**`torch` も制御できる**。
@@ -55,8 +55,10 @@ npm run build      # dist/ を生成(GitHub Pages が使う)
 - アダプタ: `LiveCameraSource` / `FileImportSource` / `CanvasJpegEncoder` /
   `ShareExporter` / `DownloadExporter`
 - UI: `src/ui/`。ホーム / 撮影 / 四隅調整 / 結果 / 診断 の 5 画面。
-  ライブ輪郭オーバーレイ、四隅のドラッグ調整、モード・DPI 切替、torch、
+  ライブ輪郭オーバーレイ、四隅のドラッグ調整、モード・DPI 切替、torch、ページ一覧、
   共有シートとダウンロード、理由コード付きの失敗表示、PDF / 画像の切替
+- 撮り溜め: `src/pages.ts` の `PageCollection`。**端末に保存せずメモリ上だけで束ねる**
+  (D-035)。保持中は白黒2値を圧縮済みで持つ(D-036)
 - オフライン動作: `public/sw.js`(キャッシュ優先 + 裏で更新)
 
 **既知の限界**: カラーの帯がある原稿(チラシ等)は輪郭検出が半分ほど外す。
@@ -65,6 +67,5 @@ npm run build      # dist/ を生成(GitHub Pages が使う)
 
 公開先: https://kaeauiama.github.io/pwa-doc-scan/ (probe は `/probe/`)
 
-次のアクション: **M2**(オートキャプチャ REQ-08 / ブレ検出 REQ-09)、
-または **M3**(複数ページを 1 つの PDF に REQ-10)。
+次のアクション: **M2**(オートキャプチャ REQ-08 / ブレ検出 REQ-09)。
 実使用で二値化の閾値(U-01)と既定 DPI(U-03)を詰める。

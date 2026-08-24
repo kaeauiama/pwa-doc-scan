@@ -2,6 +2,7 @@ import { detectDocumentQuad } from "../core/detect.ts";
 import { rgbaToGray } from "../core/gray.ts";
 import { CONFIG } from "../core/config.ts";
 import { encodeOutput, fullFrameQuad, scanToPage } from "../pipeline.ts";
+import { PageCollection } from "../pages.ts";
 import { LiveCameraSource } from "../adapters/LiveCameraSource.ts";
 import { FileImportSource } from "../adapters/FileImportSource.ts";
 import { CanvasJpegEncoder } from "../adapters/CanvasJpegEncoder.ts";
@@ -11,7 +12,7 @@ import { CornerEditor } from "./CornerEditor.ts";
 import { bilevelToCanvas, containFit, drawQuad, rgbaToCanvas } from "./render.ts";
 import { clampQuad } from "../core/warp.ts";
 import { collectEnvironment, getFailures, isStandalone, recordFailure } from "./diagnostics.ts";
-import type { OutputFormat, RenderMode } from "../pipeline.ts";
+import type { OutputFormat, RenderMode, ScanResult } from "../pipeline.ts";
 import type { Quad, Rgba } from "../core/types.ts";
 
 /* ---------------- 要素 ---------------- */
@@ -27,6 +28,7 @@ const views = {
   capture: $("view-capture"),
   adjust: $("view-adjust"),
   result: $("view-result"),
+  pages: $("view-pages"),
   diag: $("view-diag"),
 };
 type ViewName = keyof typeof views;
@@ -68,6 +70,14 @@ let format: OutputFormat = "pdf";
 let dpi: number = CONFIG.output.defaultDpi;
 let whiten = true;
 let lastOutput: { bytes: Uint8Array; mimeType: string; extension: string } | null = null;
+let lastScan: ScanResult | null = null;
+
+/**
+ * 撮り溜めたページ(REQ-10)。端末には保存せず、メモリ上だけで束ねる。
+ * サムネイルは表示専用なので PageCollection には持たせず、ここで別に持つ。
+ */
+const pages = new PageCollection();
+const thumbnails = new Map<string, string>();
 
 /* ---------------- 小物 ---------------- */
 
@@ -212,20 +222,21 @@ function runLiveDetection(): void {
 
 /* ---------------- 撮影 ---------------- */
 
-async function startCamera(): Promise<void> {
+async function startCamera(): Promise<boolean> {
   camera = new LiveCameraSource({ video: preview });
   try {
     await camera.start();
   } catch (err) {
     camera = null;
     fail("カメラ開始", err);
-    return;
+    return false;
   }
   show("capture");
   $("btn-torch").hidden = !camera.isTorchAvailable();
   liveQuad = null;
   detectBadge.textContent = "枠を探しています…";
   runLiveDetection();
+  return true;
 }
 
 function stopCamera(): void {
@@ -291,6 +302,7 @@ async function process(): Promise<void> {
     const elapsed = Math.round(performance.now() - started);
 
     lastOutput = output;
+    lastScan = result;
 
     if (result.processed.kind === "bilevel") bilevelToCanvas(result.processed.image, resultCanvas);
     else rgbaToCanvas(result.processed.image, resultCanvas);
@@ -323,18 +335,23 @@ function filename(extension: string): string {
 
 async function save(onlyDownload: boolean): Promise<void> {
   if (!lastOutput) return;
-  const payload = {
-    bytes: lastOutput.bytes,
-    filename: filename(lastOutput.extension),
-    mimeType: lastOutput.mimeType,
-  };
+  await exportBytes(lastOutput.bytes, lastOutput.mimeType, lastOutput.extension, onlyDownload);
+}
+
+async function exportBytes(
+  bytes: Uint8Array,
+  mimeType: string,
+  extension: string,
+  onlyDownload: boolean,
+): Promise<boolean> {
+  const payload = { bytes, filename: filename(extension), mimeType };
   const chosen = onlyDownload ? [exporters[1]] : exporters;
   const result = await exportWithFallback(payload, chosen);
   if (result.ok) {
     say(result.exporterId === "download" ? "ダウンロードしました。" : "書き出しました。");
-    return;
+    return true;
   }
-  if (result.reason === "CANCELLED_BY_USER") return;
+  if (result.reason === "CANCELLED_BY_USER") return false;
   recordFailure("保存", result.reason, result.detail);
   const messages: Record<string, string> = {
     UNSUPPORTED_NO_SHARE_FILES: "この端末では共有シートにファイルを渡せません。ダウンロードをお試しください。",
@@ -342,6 +359,156 @@ async function save(onlyDownload: boolean): Promise<void> {
     FAILED_UNKNOWN: "保存に失敗しました。",
   };
   say(messages[result.reason] ?? "保存に失敗しました。", result.reason);
+  return false;
+}
+
+/* ---------------- 撮り溜め(REQ-10) ---------------- */
+
+const MODE_LABEL: Record<RenderMode, string> = {
+  bilevel: "白黒2値",
+  grayscale: "グレースケール",
+  color: "カラー",
+};
+
+function refreshPagesBadge(): void {
+  const button = $("nav-pages");
+  button.hidden = pages.size === 0;
+  $("pages-count").textContent = String(pages.size);
+}
+
+/** 結果画面の canvas から一覧用の小さな画像を作る */
+function makeThumbnail(): string {
+  const thumb = document.createElement("canvas");
+  const scale = Math.min(108 / resultCanvas.width, 144 / resultCanvas.height);
+  thumb.width = Math.max(1, Math.round(resultCanvas.width * scale));
+  thumb.height = Math.max(1, Math.round(resultCanvas.height * scale));
+  const ctx = thumb.getContext("2d");
+  if (ctx) ctx.drawImage(resultCanvas, 0, 0, thumb.width, thumb.height);
+  return thumb.toDataURL("image/png");
+}
+
+function renderPageList(): void {
+  const list = $("page-list");
+  list.innerHTML = "";
+  const items = pages.list();
+
+  $("pages-summary").textContent =
+    items.length === 0
+      ? "まだページがありません。"
+      : `${items.length} ページ / 保持しているデータは約 ${(pages.byteSize / 1024).toFixed(0)} KB です。`;
+  $<HTMLButtonElement>("btn-pages-save").disabled = items.length === 0;
+
+  if (items.length === 0) {
+    const li = document.createElement("li");
+    li.className = "empty";
+    li.textContent = "結果の画面から「ページに追加して続ける」で溜められます。";
+    list.append(li);
+    return;
+  }
+
+  items.forEach((item, index) => {
+    const li = document.createElement("li");
+
+    const img = document.createElement("img");
+    img.className = "thumb";
+    img.alt = `${index + 1} ページ目`;
+    const src = thumbnails.get(item.id);
+    if (src) img.src = src;
+    li.append(img);
+
+    const meta = document.createElement("div");
+    meta.className = "meta";
+    const title = document.createElement("strong");
+    title.textContent = `${index + 1}. ${MODE_LABEL[item.meta.mode]} / ${item.meta.dpi}dpi`;
+    const detail = document.createElement("span");
+    detail.textContent = `${item.meta.width} x ${item.meta.height} / 約 ${(item.meta.byteSize / 1024).toFixed(0)} KB`;
+    meta.append(title, detail);
+    li.append(meta);
+
+    const ops = document.createElement("div");
+    ops.className = "ops";
+    const up = document.createElement("button");
+    up.type = "button";
+    up.textContent = "↑";
+    up.setAttribute("aria-label", "前に移動");
+    up.disabled = index === 0;
+    up.addEventListener("click", () => {
+      pages.move(item.id, -1);
+      renderPageList();
+    });
+    const down = document.createElement("button");
+    down.type = "button";
+    down.textContent = "↓";
+    down.setAttribute("aria-label", "後ろに移動");
+    down.disabled = index === items.length - 1;
+    down.addEventListener("click", () => {
+      pages.move(item.id, 1);
+      renderPageList();
+    });
+    const remove = document.createElement("button");
+    remove.type = "button";
+    remove.className = "danger";
+    remove.textContent = "削除";
+    remove.addEventListener("click", () => {
+      pages.remove(item.id);
+      thumbnails.delete(item.id);
+      refreshPagesBadge();
+      renderPageList();
+    });
+    ops.append(up, down, remove);
+    li.append(ops);
+    list.append(li);
+  });
+}
+
+async function addCurrentPage(): Promise<void> {
+  if (!lastScan) return;
+  const id = await pages.add(
+    lastScan.page,
+    lastScan.mode,
+    lastScan.dpi,
+    lastScan.outputWidth,
+    lastScan.outputHeight,
+  );
+  thumbnails.set(id, makeThumbnail());
+  refreshPagesBadge();
+  say(`${pages.size} ページ目として追加しました。`);
+
+  // 12.2MP の元画像は 49MB ある。ページに移した後は不要なので手放す。
+  // 次の撮影でカメラが 12.2MP を流すため、抱えたままだと端末が苦しい
+  captured = null;
+  displayCanvas = null;
+  lastScan = null;
+  lastOutput = null;
+
+  // カメラを開けなかったときは結果画面に留めず、一覧を見せる(二重追加を防ぐ)
+  if (!(await startCamera())) {
+    renderPageList();
+    show("pages");
+  }
+}
+
+async function savePages(): Promise<void> {
+  if (pages.size === 0) return;
+  setBusy(true, "PDF にまとめています…");
+  await nextFrame();
+  try {
+    const bytes = await pages.toPdf();
+    setBusy(false);
+    const saved = await exportBytes(bytes, "application/pdf", "pdf", false);
+    if (saved) {
+      // 保存できたページは持ち続けない。端末に溜め込まない方針(D-005)を保つ
+      pages.clear();
+      thumbnails.clear();
+      refreshPagesBadge();
+      renderPageList();
+      show("home");
+    }
+  } catch (err) {
+    fail("まとめて保存", err);
+  } finally {
+    setBusy(false);
+  }
 }
 
 /* ---------------- 画面の配線 ---------------- */
@@ -473,6 +640,33 @@ $("btn-home").addEventListener("click", () => {
   show("home");
 });
 
+$("btn-add-page").addEventListener("click", () => {
+  void addCurrentPage();
+});
+
+$("nav-pages").addEventListener("click", () => {
+  renderPageList();
+  show("pages");
+});
+
+$("btn-pages-add-more").addEventListener("click", () => {
+  void startCamera();
+});
+
+$("btn-pages-clear").addEventListener("click", () => {
+  if (pages.size === 0) return;
+  if (!confirm(`${pages.size} ページをすべて破棄します。よろしいですか?`)) return;
+  pages.clear();
+  thumbnails.clear();
+  refreshPagesBadge();
+  renderPageList();
+  say("すべて破棄しました。");
+});
+
+$("btn-pages-save").addEventListener("click", () => {
+  void savePages();
+});
+
 $("nav-diag").addEventListener("click", () => {
   fillTable($<HTMLTableElement>("diag-env"), collectEnvironment());
   const table = $<HTMLTableElement>("diag-errors");
@@ -491,6 +685,11 @@ $("nav-diag").addEventListener("click", () => {
 });
 
 $("btn-diag-back").addEventListener("click", () => {
+  if (pages.size > 0 && !captured) {
+    renderPageList();
+    show("pages");
+    return;
+  }
   show(captured ? "adjust" : "home");
 });
 
@@ -512,6 +711,13 @@ $("btn-copy-diag").addEventListener("click", async () => {
 
 /* ---------------- 全体 ---------------- */
 
+// 撮り溜めたページは端末に保存しないため、閉じると消える。黙って失わせない
+globalThis.addEventListener("beforeunload", (event) => {
+  if (pages.size === 0) return;
+  event.preventDefault();
+  event.returnValue = "";
+});
+
 // HC-2: 画面が隠れたらカメラを止める。バックグラウンド撮影を構造的に不可能にする
 document.addEventListener("visibilitychange", () => {
   if (document.visibilityState === "hidden") stopCamera();
@@ -527,6 +733,7 @@ if (isStandalone()) {
     "カメラの使用許可を求められます。ホーム画面から起動している場合、許可はアプリを開き直すたびに聞かれます(iOS の仕様です)。";
 }
 
+refreshPagesBadge();
 setSegmented($("mode-group"), mode, "mode");
 setSegmented($("format-group"), format, "format");
 setSegmented($("dpi-group"), String(dpi), "dpi");

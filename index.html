@@ -2,73 +2,129 @@
 <html lang="ja">
 <head>
 <meta charset="utf-8">
-<meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
+<meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover,user-scalable=no">
 <title>pwa-doc-scan</title>
 <link rel="manifest" href="./manifest.webmanifest">
 <meta name="apple-mobile-web-app-capable" content="yes">
 <meta name="apple-mobile-web-app-status-bar-style" content="black">
 <meta name="theme-color" content="#111111">
 <link rel="apple-touch-icon" href="./icon.svg">
-<style>
-  :root { color-scheme: light dark; --bg:#fff; --fg:#111; --mut:#666; --line:#ddd; --card:#f7f7f8; }
-  @media (prefers-color-scheme: dark) { :root { --bg:#121214; --fg:#eee; --mut:#999; --line:#333; --card:#1c1c20; } }
-  * { box-sizing: border-box; }
-  body { margin:0; padding:20px; max-width:640px; font:15px/1.7 -apple-system,BlinkMacSystemFont,"Hiragino Sans","Noto Sans JP",sans-serif; background:var(--bg); color:var(--fg); }
-  h1 { font-size:20px; margin:0 0 4px; }
-  p.lead { color:var(--mut); font-size:13px; margin:0 0 20px; }
-  .card { background:var(--card); border-radius:10px; padding:14px 16px; margin:12px 0; }
-  a.btn { display:inline-block; padding:10px 16px; border-radius:8px; background:var(--fg); color:var(--bg); text-decoration:none; font-weight:600; }
-  table { width:100%; border-collapse:collapse; font-size:13px; }
-  th,td { text-align:left; padding:5px 6px; border-bottom:1px solid var(--line); }
-  th { color:var(--mut); font-weight:600; width:55%; }
-  code { font-size:12px; }
-</style>
+<link rel="icon" href="./icon.svg" type="image/svg+xml">
+<link rel="stylesheet" href="./src/ui/app.css">
 </head>
 <body>
-<h1>pwa-doc-scan</h1>
-<p class="lead">書類スキャン特化の PWA。撮影・処理・保存をすべて端末内で完結させます。</p>
 
-<div class="card">
-  <b>現在 M1(実装中)です。撮影 UI はまだありません。</b><br>
-  計測ページで <b>6. 解像度の切り替え</b> / <b>7. 実フレームレート</b> / <b>8. ライト</b> を
-  実機で測ってください。撮影方式(プレビュー解像度をどうするか)がその数値で決まります。
-</div>
+<header class="bar">
+  <h1>pwa-doc-scan</h1>
+  <button id="nav-diag" class="ghost" type="button" aria-label="診断">診断</button>
+</header>
 
-<p><a class="btn" href="probe/">実機能力計測ページを開く</a></p>
+<main>
+  <!-- ホーム -->
+  <section id="view-home" class="view">
+    <div class="card">
+      <p class="lead">
+        書類を撮影して、モノクロやカラーの PDF にします。
+        撮影・処理・保存はすべてこの端末の中で完結し、画像が外部に送られることはありません。
+      </p>
+    </div>
+    <div class="actions">
+      <button id="btn-start" class="primary big" type="button">カメラを開始</button>
+      <label class="button big" for="file-import">写真から読み込む</label>
+      <input type="file" id="file-import" accept="image/*" hidden>
+    </div>
+    <p class="note" id="permission-note">
+      カメラの使用許可を求められます。ホーム画面から起動した場合、
+      許可はアプリを開き直すたびに聞かれます(iOS の仕様です)。
+    </p>
+  </section>
 
-<div class="card">
-  <b>この端末の状態</b>
-  <table id="t"></table>
-</div>
+  <!-- 撮影 -->
+  <section id="view-capture" class="view" hidden>
+    <div class="stage">
+      <video id="preview" playsinline muted autoplay></video>
+      <canvas id="overlay"></canvas>
+      <div id="detect-badge" class="badge">検出中…</div>
+    </div>
+    <div class="controls">
+      <button id="btn-torch" class="ghost" type="button" hidden>ライト</button>
+      <button id="btn-shutter" class="shutter" type="button" aria-label="撮影"></button>
+      <button id="btn-cancel-capture" class="ghost" type="button">やめる</button>
+    </div>
+    <p class="note">枠が書類に合っていなくても撮影できます。次の画面で四隅を直せます。</p>
+  </section>
 
-<p class="lead">
-このページは画像を一切送信しません。処理はすべてブラウザ内で行われます。
-</p>
+  <!-- 四隅の調整 -->
+  <section id="view-adjust" class="view" hidden>
+    <div class="stage">
+      <canvas id="editor"></canvas>
+    </div>
+    <p class="note" id="adjust-note">四隅をドラッグして、書類の角に合わせてください。</p>
+    <div class="options">
+      <div class="opt">
+        <span>出力</span>
+        <div class="segmented" id="mode-group" role="radiogroup" aria-label="出力モード">
+          <button type="button" data-mode="bilevel" class="on">白黒2値</button>
+          <button type="button" data-mode="grayscale">グレー</button>
+          <button type="button" data-mode="color">カラー</button>
+        </div>
+      </div>
+      <div class="opt">
+        <span>解像度</span>
+        <div class="segmented" id="dpi-group" role="radiogroup" aria-label="出力解像度">
+          <button type="button" data-dpi="150">150dpi</button>
+          <button type="button" data-dpi="200" class="on">200dpi</button>
+          <button type="button" data-dpi="300">300dpi</button>
+        </div>
+      </div>
+      <label class="opt check" id="whiten-row">
+        <input type="checkbox" id="opt-whiten" checked>
+        <span>背景を白く飛ばす</span>
+      </label>
+    </div>
+    <div class="controls">
+      <button id="btn-reset-quad" class="ghost" type="button">四隅を戻す</button>
+      <button id="btn-process" class="primary" type="button">この範囲で作成</button>
+      <button id="btn-back-capture" class="ghost" type="button">撮り直す</button>
+    </div>
+  </section>
 
-<script type="module">
-  const standalone = matchMedia("(display-mode: standalone)").matches || navigator.standalone === true;
-  const rows = {
-    "HTTPS(secure context)": isSecureContext,
-    "カメラ API (getUserMedia)": !!navigator.mediaDevices?.getUserMedia,
-    "ファイル共有 (share files)": (() => {
-      try {
-        return navigator.canShare?.({ files: [new File([new Uint8Array([1])], "a.pdf", { type: "application/pdf" })] }) ?? false;
-      } catch { return false; }
-    })(),
-    "PDF 生成 (CompressionStream)": (() => {
-      try { new CompressionStream("deflate"); return true; } catch { return false; } })(),
-    "ホーム画面から起動している": standalone,
-    "manifest の display-mode が効いている": matchMedia("(display-mode: standalone)").matches,
-  };
-  const t = document.getElementById("t");
-  for (const [k, v] of Object.entries(rows)) {
-    const tr = document.createElement("tr");
-    const th = document.createElement("th"); th.textContent = k;
-    const td = document.createElement("td");
-    td.textContent = v ? "OK" : "利用不可";
-    td.style.color = v ? "#0a7" : "#c33";
-    tr.append(th, td); t.append(tr);
-  }
-</script>
+  <!-- 結果 -->
+  <section id="view-result" class="view" hidden>
+    <div class="stage">
+      <canvas id="result"></canvas>
+    </div>
+    <table class="info" id="result-info"></table>
+    <div class="controls">
+      <button id="btn-save" class="primary" type="button">保存 / 共有</button>
+      <button id="btn-download" class="ghost" type="button">ダウンロード</button>
+    </div>
+    <div class="controls">
+      <button id="btn-back-adjust" class="ghost" type="button">四隅とモードを直す</button>
+      <button id="btn-home" class="ghost" type="button">最初から</button>
+    </div>
+  </section>
+
+  <!-- 診断 -->
+  <section id="view-diag" class="view" hidden>
+    <div class="card">
+      <p class="lead">この端末で何が使えるかと、直近の失敗の記録です。うまく動かないときの手がかりになります。</p>
+    </div>
+    <h2>この端末</h2>
+    <table class="info" id="diag-env"></table>
+    <h2>直近の失敗</h2>
+    <table class="info" id="diag-errors"></table>
+    <div class="controls">
+      <button id="btn-copy-diag" class="ghost" type="button">結果をコピー</button>
+      <button id="btn-diag-back" class="primary" type="button">戻る</button>
+    </div>
+    <p class="note">実機の詳細な能力を測るページは <a href="./probe/">こちら</a>。</p>
+  </section>
+</main>
+
+<div id="toast" class="toast" hidden></div>
+<div id="busy" class="busy" hidden><div class="spinner"></div><span id="busy-label">処理中…</span></div>
+
+<script type="module" src="/src/ui/app.ts"></script>
 </body>
 </html>

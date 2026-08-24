@@ -2,7 +2,10 @@ import { SourceError } from "../ports/ImageSource.ts";
 import type { ImageSource, SourceInfo } from "../ports/ImageSource.ts";
 import type { Rgba } from "../core/types.ts";
 
-/** プレビュー用。1080p。12.2MP を流し続けたときの発熱と電池が読めないため(L-11) */
+/**
+ * 低解像度で流す場合の制約。既定では使わない(D-025)。
+ * 最大解像度で 30fps が出ない端末向けの逃げ道。
+ */
 export const PREVIEW_CONSTRAINT: MediaTrackConstraints = {
   width: { ideal: 1920 },
   height: { ideal: 1080 },
@@ -24,8 +27,12 @@ export interface LiveCameraOptions {
   previewConstraint?: MediaTrackConstraints;
   captureConstraint?: MediaTrackConstraints;
   /**
-   * シャッター時だけ解像度を上げるか(D-021)。
-   * false なら最初から撮影解像度で流す。実機計測の結果しだいで既定を変える。
+   * シャッター時だけ解像度を上げるか。**既定は false**(D-025)。
+   *
+   * 実機計測では最大解像度でも 30.2fps・発熱なしだった一方、切り替えは片道 約450ms
+   * かかり、その間プレビューが実質停止する(切り替え中に届いたフレームは 2 枚)。
+   * 往復で毎ショット約 900ms を払って得るものが無いため、切り替えない。
+   * 低スペック端末で最大解像度が流せない場合の逃げ道としてだけ残してある。
    */
   switchOnCapture?: boolean;
   /** 解像度切り替え後、映像が実際に切り替わるのを待つ上限 */
@@ -78,7 +85,7 @@ export class LiveCameraSource implements ImageSource {
     this.#video = options.video;
     this.#preview = options.previewConstraint ?? PREVIEW_CONSTRAINT;
     this.#capture = options.captureConstraint ?? CAPTURE_CONSTRAINT;
-    this.#switchOnCapture = options.switchOnCapture ?? true;
+    this.#switchOnCapture = options.switchOnCapture ?? false;
     this.#switchTimeoutMs = options.switchTimeoutMs ?? 8000;
   }
 

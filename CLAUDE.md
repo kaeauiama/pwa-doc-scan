@@ -40,22 +40,28 @@ npm run build      # dist/ を生成(GitHub Pages が使う)
 
 ## 現在地
 
-**M0 完了 / M0.5 は Safari タブで実施済み(standalone は未実施)。
-コア(`src/core/`)は先行実装済み・テスト 23 件通過。**
+**M0 / M0.5 完了(Safari タブ・standalone とも実機計測済み)。M1 実装中。
+テスト 41 件通過。**
 
-実機計測で前提が 2 つ覆った(D-017)。`getUserMedia` は **4032x3024 / 12.2MP /
-A4 実効 366dpi** を返し、**`torch` も制御できる**。静止画経路と解像度が同一のため、
-D-002 の「2 経路併存」の存在理由が消えている(U-09 として再判断待ち)。
+実機計測で机上の前提が覆った(D-017 / D-025)。`getUserMedia` は **4032x3024 /
+12.2MP / A4 実効 366dpi** を **30fps・発熱なし**で返し、**`torch` も制御できる**。
+このため撮影経路は無音の 1 本に統合し(D-020)、解像度の切り替えもしない(D-025)。
 
-- 実装済み: グレースケール、積分画像、照明の平坦化、Sobel、Hough 直線変換、
-  **書類の四隅の自動検出 + 高解像度での精密化**、適応二値化(Sauvola / Bradley)、
-  射影変換、1bit パッキング、PNG エンコーダ、複数ページ PDF エンコーダ
-- 未実装: 撮影 UI、実機アダプタ
-  (`LiveCameraSource` / `FileCaptureSource` / `ShareExporter` / `DownloadExporter`)
+- コア: 照明の平坦化、Sobel、Hough、**四隅の自動検出 + 高解像度での精密化**、
+  適応二値化、射影変換(グレー / カラー)、背景の白飛ばし、
+  1bit PNG、**PDF(1bit + FlateDecode / JPEG + DCTDecode の複数ページ)**
+- パイプライン: `src/pipeline.ts` の `scanToPage`。
+  **カラー / グレースケール / 白黒2値**の 3 モード(REQ-20)
+- アダプタ: `LiveCameraSource` / `FileImportSource` / `CanvasJpegEncoder` /
+  `ShareExporter` / `DownloadExporter`
+- **未実装: 撮影 UI 一式**(プレビュー、輪郭オーバーレイ、手動 4 隅調整、
+  モード切替、診断画面)
+
+**既知の限界**: カラーの帯がある原稿(チラシ等)は輪郭検出が半分ほど外す。
+2 案試して両方失敗し revert した(D-028)。REQ-03 の手動調整で受ける前提なので、
+**検出結果は必ず編集可能なオーバーレイとして出すこと。**
 
 公開先: https://kaeauiama.github.io/pwa-doc-scan/ (probe は `/probe/`)
 
-次のアクション:
-1. U-09 を決める(2 経路を維持するか / プレビュー解像度をどうするか)
-2. standalone(ホーム画面起動)で probe を再実施し L-4 を確認する
-3. M1 の撮影 UI と実機アダプタを実装する
+次のアクション: **M1 の撮影 UI**(プレビュー + 輪郭オーバーレイ + 手動 4 隅調整 +
+モード切替 + 書き出し + 診断画面)。実機アダプタとコアは揃っている。

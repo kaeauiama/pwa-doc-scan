@@ -204,3 +204,57 @@ test("書類が小さすぎる場合は採用しない", () => {
   if (r.ok) assert.ok(r.areaRatio >= 0.15, "minAreaRatio を下回るものを採用してはいけない");
   else assert.equal(r.reason, "NO_VALID_QUAD");
 });
+
+/**
+ * 既知の限界(D-028)。カラーの帯が入った原稿では、帯の境界が紙の縁より
+ * 高コントラストになり、輪郭検出が帯に吸い付くことがある。
+ *
+ * この挙動を直そうとして、エッジのしきい値を緩める・
+ * 「最も外側の四角形」を優先する、の 2 案を試したが、いずれも他の条件を
+ * 大きく悪化させたため採用しなかった(D-028)。
+ *
+ * 現状は REQ-03(手動での四隅調整)で受ける前提。
+ * このテストは「普通の原稿は完璧」「帯ありは半分程度外す」を固定し、
+ * どちらが動いても気づけるようにするためのもの。
+ */
+test("既知の限界: 色帯のある原稿では検出を外しうる", (t) => {
+  const quads: (Quad | undefined)[] = [
+    undefined,
+    [
+      { x: 300, y: 60 },
+      { x: 1220, y: 230 },
+      { x: 1030, y: 960 },
+      { x: 160, y: 730 },
+    ] as unknown as Quad,
+    [
+      { x: 380, y: 230 },
+      { x: 1030, y: 200 },
+      { x: 1060, y: 850 },
+      { x: 350, y: 830 },
+    ] as unknown as Quad,
+  ];
+  const result = { plain: { n: 0, miss: 0 }, banded: { n: 0, miss: 0 } };
+  for (const colorBandHeight of [0, 110]) {
+    for (const pitch of [4, 8, 16]) {
+      for (const quad of quads) {
+        const f = makeDocumentPhoto(
+          { width: 620, height: 877, seed: 42, strokePitch: pitch },
+          { ...PHOTO, shading: 0.5, noise: 8, seed: 21, quad, colorBandHeight },
+        );
+        const bucket = colorBandHeight === 0 ? result.plain : result.banded;
+        bucket.n++;
+        const r = detectDocumentQuad(rgbaToGray(f.photo));
+        if (!r.ok || cornerError(r.quad, f.quad, SHORT_EDGE) > 0.02) bucket.miss++;
+      }
+    }
+  }
+  t.diagnostic(
+    `帯なし ${result.plain.miss}/${result.plain.n} 外し / ` +
+      `帯あり ${result.banded.miss}/${result.banded.n} 外し`,
+  );
+  assert.equal(result.plain.miss, 0, "色帯が無い原稿は全て当てること");
+  assert.ok(
+    result.banded.miss <= Math.ceil(result.banded.n * 0.75),
+    "色帯ありの外し率がさらに悪化している",
+  );
+});

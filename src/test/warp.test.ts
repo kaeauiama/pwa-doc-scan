@@ -1,7 +1,7 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
 
-import { applyMatrix, computeHomography, estimateOutputSize, warpGray } from "../core/warp.ts";
+import { applyMatrix, computeHomography, estimateOutputSize, insetQuad, warpGray } from "../core/warp.ts";
 import { rgbaToGray } from "../core/gray.ts";
 import { agreementIgnoringEdges, makeDocumentPhoto } from "./fixtures/synthetic.ts";
 import type { Quad } from "../core/types.ts";
@@ -107,4 +107,28 @@ test("細部の復元力は文字の太さに依存する(解像度不足の影�
   for (let i = 1; i < results.length; i++) {
     assert.ok(results[i].acc < results[i - 1].acc, `pitch ${results[i].pitch}px で一致率が下がるはず`);
   }
+});
+
+test("insetQuad: 重心方向に一様に縮み、比率と重心を保つ", () => {
+  const q: Quad = [
+    { x: 100, y: 200 },
+    { x: 400, y: 220 },
+    { x: 380, y: 700 },
+    { x: 90, y: 660 },
+  ];
+  const inset = insetQuad(q, 0.1);
+  const centroid = (v: Quad) => ({
+    x: (v[0].x + v[1].x + v[2].x + v[3].x) / 4,
+    y: (v[0].y + v[1].y + v[2].y + v[3].y) / 4,
+  });
+  const c0 = centroid(q);
+  const c1 = centroid(inset);
+  assert.ok(Math.abs(c0.x - c1.x) < 1e-9 && Math.abs(c0.y - c1.y) < 1e-9, "重心が動かない");
+
+  for (let i = 0; i < 4; i++) {
+    const d0 = Math.hypot(q[i].x - c0.x, q[i].y - c0.y);
+    const d1 = Math.hypot(inset[i].x - c1.x, inset[i].y - c1.y);
+    assert.ok(Math.abs(d1 / d0 - 0.9) < 1e-9, `隅 ${i} の縮小率`);
+  }
+  assert.deepEqual([...insetQuad(q, 0)], [...q], "0 なら何もしない");
 });

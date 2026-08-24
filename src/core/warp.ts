@@ -1,4 +1,4 @@
-import type { Gray8, Matrix3, Point, Quad } from "./types.ts";
+import type { Gray8, Matrix3, Point, Quad, Rgba } from "./types.ts";
 
 /** n x (n+1) の拡大係数行列を部分ピボット付き Gauss 消去で解く */
 function solve(a: number[][], n: number): number[] {
@@ -68,6 +68,22 @@ export function estimateOutputSize(quad: Quad, maxLongEdge?: number): { width: n
 }
 
 /**
+ * 四隅を重心方向に fraction だけ縮める。
+ *
+ * 検出した四隅は紙の縁のわずかに外側に出ることがあり、そのまま切り出すと
+ * 縁に机が写り込む。白飛ばしや二値化はその机を紙と誤認して汚れを作るので、
+ * ほんの少し内側で切る。実際のスキャナアプリも同じことをしている。
+ */
+export function insetQuad(quad: Quad, fraction: number): Quad {
+  if (fraction <= 0) return quad;
+  const cx = (quad[0].x + quad[1].x + quad[2].x + quad[3].x) / 4;
+  const cy = (quad[0].y + quad[1].y + quad[2].y + quad[3].y) / 4;
+  const k = 1 - fraction;
+  const moved = quad.map((p) => ({ x: cx + (p.x - cx) * k, y: cy + (p.y - cy) * k }));
+  return [moved[0], moved[1], moved[2], moved[3]] as Quad;
+}
+
+/**
  * srcQuad が示す四角形を width x height の矩形に透視補正する。
  * 出力側から入力側への逆写像 + バイリニア補間。範囲外は白(255)で埋める。
  */
@@ -105,6 +121,60 @@ export function warpGray(src: Gray8, srcQuad: Quad, width: number, height: numbe
       const top = sd[y0 * sw + x0] * (1 - fx) + sd[y0 * sw + x1] * fx;
       const bottom = sd[y1 * sw + x0] * (1 - fx) + sd[y1 * sw + x1] * fx;
       out[y * width + x] = Math.round(top * (1 - fy) + bottom * fy);
+    }
+  }
+  return { width, height, data: out };
+}
+
+/**
+ * `warpGray` のカラー版。カラー / グレースケール出力で使う(REQ-20)。
+ * 補間とサンプリングの規則は `warpGray` と同一。範囲外は白で埋める。
+ */
+export function warpRgba(src: Rgba, srcQuad: Quad, width: number, height: number): Rgba {
+  const dstQuad: Quad = [
+    { x: 0, y: 0 },
+    { x: width, y: 0 },
+    { x: width, y: height },
+    { x: 0, y: height },
+  ];
+  const inv = computeHomography(dstQuad, srcQuad);
+  const out = new Uint8ClampedArray(width * height * 4);
+  const sw = src.width;
+  const sh = src.height;
+  const sd = src.data;
+
+  for (let y = 0; y < height; y++) {
+    const py = y + 0.5;
+    for (let x = 0; x < width; x++) {
+      const px = x + 0.5;
+      const w = inv[6] * px + inv[7] * py + inv[8];
+      const sx = (inv[0] * px + inv[1] * py + inv[2]) / w;
+      const sy = (inv[3] * px + inv[4] * py + inv[5]) / w;
+      const o = (y * width + x) * 4;
+
+      if (sx < 0 || sy < 0 || sx > sw - 1 || sy > sh - 1) {
+        out[o] = 255;
+        out[o + 1] = 255;
+        out[o + 2] = 255;
+        out[o + 3] = 255;
+        continue;
+      }
+      const x0 = sx | 0;
+      const y0 = sy | 0;
+      const x1 = x0 + 1 > sw - 1 ? sw - 1 : x0 + 1;
+      const y1 = y0 + 1 > sh - 1 ? sh - 1 : y0 + 1;
+      const fx = sx - x0;
+      const fy = sy - y0;
+      const i00 = (y0 * sw + x0) * 4;
+      const i01 = (y0 * sw + x1) * 4;
+      const i10 = (y1 * sw + x0) * 4;
+      const i11 = (y1 * sw + x1) * 4;
+      for (let c = 0; c < 3; c++) {
+        const top = sd[i00 + c] * (1 - fx) + sd[i01 + c] * fx;
+        const bottom = sd[i10 + c] * (1 - fx) + sd[i11 + c] * fx;
+        out[o + c] = top * (1 - fy) + bottom * fy;
+      }
+      out[o + 3] = 255;
     }
   }
   return { width, height, data: out };

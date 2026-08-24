@@ -1,13 +1,20 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import zlib from "node:zlib";
+import { readFileSync } from "node:fs";
+import { join } from "node:path";
 
 import { encodePng1bit } from "../core/png.ts";
-import { encodePdf1bit } from "../core/pdf.ts";
+import { bilevelPage, encodePdf, jpegPage } from "../core/pdf.ts";
 import { packBits, rowBytesOf } from "../core/pack.ts";
 import { makeIdealPage } from "./fixtures/synthetic.ts";
 
 const page = makeIdealPage({ width: 620, height: 877, seed: 7 });
+
+/** テスト用の固定データ。JPEG エンコーダを持たないので、実物のファイルを置いてある */
+function readFixture(name: string): Uint8Array {
+  return new Uint8Array(readFileSync(join(import.meta.dirname, "fixtures", name)));
+}
 
 test("packBits: MSB 先頭で往復する", () => {
   const packed = packBits(page, false);
@@ -63,8 +70,8 @@ test("encodePng1bit: 構造・CRC・ビット往復が正しい", async () => {
   assert.equal(mismatch, 0);
 });
 
-test("encodePdf1bit: 単一ページの xref とストリーム長が整合する", async () => {
-  const pdf = await encodePdf1bit([{ image: page, dpi: 200 }]);
+test("encodePdf: 単一ページの xref とストリーム長が整合する", async () => {
+  const pdf = await encodePdf([bilevelPage(page, 200)]);
   const buf = Buffer.from(pdf.buffer, pdf.byteOffset, pdf.length);
   const txt = buf.toString("latin1");
 
@@ -89,13 +96,9 @@ test("encodePdf1bit: 単一ページの xref とストリーム長が整合す�
   assert.deepEqual(Uint8Array.from(imgRaw), packBits(page, false));
 });
 
-test("encodePdf1bit: 複数ページでも xref が全オブジェクトを指す", async () => {
+test("encodePdf: 複数ページでも xref が全オブジェクトを指す", async () => {
   const small = makeIdealPage({ width: 200, height: 280, seed: 3 });
-  const pdf = await encodePdf1bit([
-    { image: page, dpi: 200 },
-    { image: small, dpi: 150 },
-    { image: small, dpi: 300 },
-  ]);
+  const pdf = await encodePdf([bilevelPage(page, 200), bilevelPage(small, 150), bilevelPage(small, 300)]);
   const txt = Buffer.from(pdf.buffer, pdf.byteOffset, pdf.length).toString("latin1");
   const startxref = Number(txt.slice(txt.lastIndexOf("startxref") + 9).trim().split(/\s/)[0]);
   const offs = [...txt.slice(startxref).matchAll(/^(\d{10}) 00000 n $/gm)].map((m) => Number(m[1]));
@@ -106,6 +109,45 @@ test("encodePdf1bit: 複数ページでも xref が全オブジェクトを指�
   assert.match(txt, /\/Kids \[3 0 R 6 0 R 9 0 R\] \/Count 3/);
 });
 
-test("encodePdf1bit: 空ページ配列は明示的に失敗する", async () => {
-  await assert.rejects(() => encodePdf1bit([]), /ページが空/);
+test("encodePdf: 空ページ配列は明示的に失敗する", async () => {
+  await assert.rejects(() => encodePdf([]), /ページが空/);
+});
+
+test("encodePdf: JPEG ページを DCTDecode で埋め、バイト列をそのまま保つ", async () => {
+  // 実物の JPEG(src/test/fixtures/tiny.jpg)。エンコーダは持たないので固定データを使う
+  const jpeg = readFixture("tiny.jpg");
+  assert.equal(jpeg[0], 0xff, "JPEG の SOI マーカー");
+  assert.equal(jpeg[1], 0xd8);
+
+  const pdf = await encodePdf([jpegPage(jpeg, 64, 48, 200)]);
+  const buf = Buffer.from(pdf.buffer, pdf.byteOffset, pdf.length);
+  const txt = buf.toString("latin1");
+
+  assert.match(txt, /\/Filter \/DCTDecode/);
+  assert.match(txt, /\/ColorSpace \/DeviceRGB \/BitsPerComponent 8/);
+  assert.match(txt, /\/Width 64 \/Height 48/);
+  // 64px を 200dpi で置くと 23.04pt
+  assert.match(txt, /\/MediaBox \[0 0 23\.04 17\.28\]/);
+
+  const m = txt.match(/\/Filter \/DCTDecode \/Length (\d+) >>\nstream\n/);
+  assert.ok(m, "画像オブジェクトが見つかる");
+  const declared = Number(m[1]);
+  assert.equal(declared, jpeg.length, "JPEG は再圧縮せずそのまま埋める");
+  const start = txt.indexOf("stream\n", m.index) + 7;
+  assert.deepEqual(Uint8Array.from(buf.subarray(start, start + declared)), jpeg, "バイト列が一致する");
+
+  // xref の整合も崩れていないこと
+  const startxref = Number(txt.slice(txt.lastIndexOf("startxref") + 9).trim().split(/\s/)[0]);
+  assert.equal(txt.slice(startxref, startxref + 4), "xref");
+  const offs = [...txt.slice(startxref).matchAll(/^(\d{10}) 00000 n $/gm)].map((x) => Number(x[1]));
+  offs.forEach((o, i) => assert.equal(txt.slice(o, o + `${i + 1} 0 obj`.length), `${i + 1} 0 obj`));
+});
+
+test("encodePdf: 白黒2値と JPEG のページを混在できる", async () => {
+  const jpeg = readFixture("tiny.jpg");
+  const pdf = await encodePdf([bilevelPage(page, 200), jpegPage(jpeg, 64, 48, 200)]);
+  const txt = Buffer.from(pdf.buffer, pdf.byteOffset, pdf.length).toString("latin1");
+  assert.match(txt, /\/Kids \[3 0 R 6 0 R\] \/Count 2/);
+  assert.match(txt, /\/Filter \/FlateDecode/);
+  assert.match(txt, /\/Filter \/DCTDecode/);
 });

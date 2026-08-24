@@ -70,6 +70,12 @@ export interface PhotoOptions {
   noise?: number;
   /** 机の明るさ */
   background?: number;
+  /**
+   * 紙面に色帯を敷く高さ(紙面座標の px)。0 なら敷かない。
+   * チラシやカラーページを模す。帯の境界は紙の縁より高コントラストになりうるので、
+   * 輪郭検出にとって最も厳しい条件のひとつ。
+   */
+  colorBandHeight?: number;
   seed?: number;
 }
 
@@ -89,6 +95,7 @@ export function makeDocumentPhoto(pageOpts: PageOptions, photoOpts: PhotoOptions
   const shading = photoOpts.shading ?? 0.55;
   const noise = photoOpts.noise ?? 6;
   const background = photoOpts.background ?? 120;
+  const bandHeight = photoOpts.colorBandHeight ?? 0;
   const rnd = lcg(photoOpts.seed ?? 999);
 
   const quad: Quad =
@@ -120,23 +127,27 @@ export function makeDocumentPhoto(pageOpts: PageOptions, photoOpts: PhotoOptions
       const sx = (toPage[0] * px + toPage[1] * py + toPage[2]) / w;
       const sy = (toPage[3] * px + toPage[4] * py + toPage[5]) / w;
 
-      let v: number;
-      if (sx < 0 || sy < 0 || sx >= page.width || sy >= page.height) {
-        v = background;
-      } else {
-        v = page.data[(sy | 0) * page.width + (sx | 0)] ? 245 : 35;
-      }
+      const inside = !(sx < 0 || sy < 0 || sx >= page.width || sy >= page.height);
+      let v = inside ? (page.data[(sy | 0) * page.width + (sx | 0)] ? 245 : 35) : background;
 
       // 左上が明るく右下が暗い照明ムラ(影を模す)
       const t = (x + y) / diag;
       v *= 1 - shading * t;
       v += (rnd() - 0.5) * 2 * noise;
 
+      let r = v;
+      let g = v;
+      let b = v;
+      if (inside && bandHeight > 0) {
+        const band = Math.floor(sy / bandHeight) % 3;
+        if (band === 1) { r *= 0.5; g *= 0.72; }
+        else if (band === 2) { g *= 0.55; b *= 0.5; }
+      }
+
       const i = (y * width + x) * 4;
-      const c = v < 0 ? 0 : v > 255 ? 255 : v;
-      out[i] = c;
-      out[i + 1] = c;
-      out[i + 2] = c;
+      out[i] = r < 0 ? 0 : r > 255 ? 255 : r;
+      out[i + 1] = g < 0 ? 0 : g > 255 ? 255 : g;
+      out[i + 2] = b < 0 ? 0 : b > 255 ? 255 : b;
       out[i + 3] = 255;
     }
   }

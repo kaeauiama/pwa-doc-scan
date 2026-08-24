@@ -6,7 +6,7 @@ import { MemoryExporter } from "../adapters/MemoryExporter.ts";
 import { rgbaToGray } from "../core/gray.ts";
 import { warpGray } from "../core/warp.ts";
 import { binarize } from "../core/binarize.ts";
-import { encodePdf1bit } from "../core/pdf.ts";
+import { bilevelPage, encodePdf } from "../core/pdf.ts";
 import { CONFIG } from "../core/config.ts";
 import { agreement, makeDocumentPhoto } from "./fixtures/synthetic.ts";
 import type { ImageSource } from "../ports/ImageSource.ts";
@@ -25,7 +25,7 @@ async function scanToPdf(source: ImageSource, exporter: Exporter, quad: Quad, me
   const gray = rgbaToGray(frame);
   const warped = warpGray(gray, quad, 620, 877);
   const bw = binarize(warped, { method });
-  const bytes = await encodePdf1bit([{ image: bw, dpi: CONFIG.output.defaultDpi }]);
+  const bytes = await encodePdf([bilevelPage(bw, CONFIG.output.defaultDpi)]);
   const result = await exporter.export({ bytes, filename: "scan.pdf", mimeType: "application/pdf" });
   return { bw, bytes, result };
 }

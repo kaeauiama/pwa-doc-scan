@@ -1,0 +1,14 @@
+{
+  "name": "pwa-doc-scan",
+  "short_name": "doc-scan",
+  "description": "書類をモノクロPDFでスキャンする。処理はすべて端末内で完結します。",
+  "start_url": "./",
+  "scope": "./",
+  "display": "standalone",
+  "orientation": "portrait",
+  "background_color": "#ffffff",
+  "theme_color": "#111111",
+  "icons": [
+    { "src": "./icon.svg", "sizes": "any", "type": "image/svg+xml", "purpose": "any" }
+  ]
+}

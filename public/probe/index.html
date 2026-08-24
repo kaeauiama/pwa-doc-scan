@@ -78,6 +78,32 @@ Markdown で取得できます。<b>HTTPS(または localhost)でないとカメ
 <input type="file" id="f-cap" accept="image/*" capture="environment">
 <table id="t-cap"></table>
 
+<h2>6. 解像度の切り替え(シャッター方式の検証)</h2>
+<p class="lead">
+プレビューを 1080p で流し、シャッター時だけ最大解像度へ上げる方式(D-021)が使えるかを測ります。
+切り替えに何 ms かかるか、その間に映像が止まらないかが判断材料です。専用のストリームを張るので
+「4.」とは独立に実行できます。
+</p>
+<video id="vid2" playsinline muted autoplay></video>
+<button id="b-switch" class="primary">切り替えを 3 往復して計測</button>
+<table id="t-switch"></table>
+
+<h2>7. 実フレームレートの持続</h2>
+<p class="lead">
+各解像度で 6 秒間流し、実際に届いたフレーム数から fps を出します。
+最大解像度で fps が大きく落ちるなら、プレビューを常時最大にする方式は避けるべきという判断材料になります。
+<b>端末が熱くなるようなら途中でページを閉じてください。</b>
+</p>
+<button id="b-fps">実 fps を計測(約 15 秒)</button>
+<table id="t-fps"></table>
+
+<h2>8. ライト(torch)</h2>
+<p class="lead">
+背面ライトを点灯できるか試します。<b>点いたかどうかは目で確認してください。</b>2 秒後に自動で消灯します。
+</p>
+<button id="b-torch">ライトを 2 秒点灯</button>
+<table id="t-torch"></table>
+
 <h2>結果</h2>
 <button id="b-copy" class="primary">結果をコピー(Markdown)</button>
 <pre id="p-out">(まだ結果がありません)</pre>
@@ -509,6 +535,174 @@ $("#f-cap").onchange = async (ev) => {
     await runPipeline(bmp, bmp.width, bmp.height, "systemCamera");
   }
   if (bmp.close) bmp.close();
+};
+
+
+/* ---------- 6/7/8. 切り替え・fps・torch ---------- */
+
+const HAS_RVFC = typeof HTMLVideoElement !== "undefined"
+  && "requestVideoFrameCallback" in HTMLVideoElement.prototype;
+
+const MAX_CONSTRAINT = { width: { ideal: 99999 }, height: { ideal: 99999 } };
+const PREVIEW_CONSTRAINT = { width: { ideal: 1920 }, height: { ideal: 1080 } };
+
+function openStream(extra) {
+  return navigator.mediaDevices.getUserMedia({
+    audio: false,
+    video: Object.assign({ facingMode: { ideal: "environment" } }, extra),
+  });
+}
+
+/** rVFC で届いたフレーム数を数える。非対応なら null。 */
+function countFrames(video, ms) {
+  if (!HAS_RVFC) return Promise.resolve(null);
+  return new Promise((resolve) => {
+    let n = 0;
+    const t0 = performance.now();
+    const tick = () => {
+      if (performance.now() - t0 >= ms) return resolve(n);
+      n++;
+      video.requestVideoFrameCallback(tick);
+    };
+    video.requestVideoFrameCallback(tick);
+  });
+}
+
+/** applyConstraints を掛け、video 要素が実際に新しいサイズを出すまでを待つ */
+async function switchTo(track, video, constraint) {
+  const before = track.getSettings();
+  let framesDuringSwitch = 0;
+  let counting = true;
+  if (HAS_RVFC) {
+    const tick = () => {
+      if (!counting) return;
+      framesDuringSwitch++;
+      video.requestVideoFrameCallback(tick);
+    };
+    video.requestVideoFrameCallback(tick);
+  }
+
+  const t0 = performance.now();
+  await track.applyConstraints(constraint);
+  const tApplied = performance.now();
+
+  const deadline = tApplied + 8000;
+  let settings = track.getSettings();
+  while (performance.now() < deadline) {
+    settings = track.getSettings();
+    if (video.videoWidth === settings.width && video.videoHeight === settings.height) break;
+    await new Promise((r) => requestAnimationFrame(r));
+  }
+  const tReady = performance.now();
+  counting = false;
+
+  return {
+    from: `${before.width}x${before.height}`,
+    to: `${settings.width}x${settings.height}`,
+    applyMs: Math.round(tApplied - t0),
+    readyMs: Math.round(tReady - t0),
+    framesDuringSwitch,
+  };
+}
+
+$("#b-switch").onclick = async (ev) => {
+  ev.target.disabled = true;
+  const video = $("#vid2");
+  let s = null;
+  try {
+    s = await openStream(PREVIEW_CONSTRAINT);
+    video.srcObject = s;
+    await video.play();
+    const track = s.getVideoTracks()[0];
+    await new Promise((r) => setTimeout(r, 800)); // 安定待ち
+
+    const up = [];
+    const down = [];
+    for (let i = 0; i < 3; i++) {
+      up.push(await switchTo(track, video, MAX_CONSTRAINT));
+      await new Promise((r) => setTimeout(r, 400));
+      down.push(await switchTo(track, video, PREVIEW_CONSTRAINT));
+      await new Promise((r) => setTimeout(r, 400));
+    }
+    const med = (a) => a.slice().sort((x, y) => x - y)[a.length >> 1];
+    R.resolutionSwitch = {
+      "rVFC 対応": HAS_RVFC,
+      "上げ (1080p -> 最大)": `${up[0].from} -> ${up[0].to}`,
+      "上げ applyConstraints 解決まで": `${med(up.map((r) => r.applyMs))} ms (中央値)`,
+      "上げ 映像が新サイズになるまで": `${med(up.map((r) => r.readyMs))} ms (中央値) / 各回 ${up.map((r) => r.readyMs).join(", ")}`,
+      "上げ 切り替え中に届いたフレーム": up.map((r) => r.framesDuringSwitch).join(", "),
+      "下げ 映像が新サイズになるまで": `${med(down.map((r) => r.readyMs))} ms (中央値) / 各回 ${down.map((r) => r.readyMs).join(", ")}`,
+      "下げ 切り替え中に届いたフレーム": down.map((r) => r.framesDuringSwitch).join(", "),
+    };
+  } catch (err) {
+    R.resolutionSwitch = { error: err.name + ": " + err.message };
+  } finally {
+    if (s) s.getTracks().forEach((t) => t.stop());
+    $("#vid2").srcObject = null;
+  }
+  rows("#t-switch", R.resolutionSwitch);
+  dump();
+  ev.target.disabled = false;
+};
+
+$("#b-fps").onclick = async (ev) => {
+  ev.target.disabled = true;
+  const video = $("#vid2");
+  R.sustainedFps = { "rVFC 対応": HAS_RVFC };
+  if (!HAS_RVFC) {
+    R.sustainedFps["結果"] = "requestVideoFrameCallback 非対応のため計測不可";
+  } else {
+    for (const [label, constraint] of [["1080p", PREVIEW_CONSTRAINT], ["最大", MAX_CONSTRAINT]]) {
+      let s = null;
+      try {
+        s = await openStream(constraint);
+        video.srcObject = s;
+        await video.play();
+        await new Promise((r) => setTimeout(r, 1000));
+        const st = s.getVideoTracks()[0].getSettings();
+        const frames = await countFrames(video, 6000);
+        R.sustainedFps[`${label} (${st.width}x${st.height})`] =
+          `${(frames / 6).toFixed(1)} fps 実測 / 申告 ${st.frameRate ?? "?"} fps`;
+      } catch (err) {
+        R.sustainedFps[label] = "失敗: " + err.name + " " + err.message;
+      } finally {
+        if (s) s.getTracks().forEach((t) => t.stop());
+        video.srcObject = null;
+      }
+      rows("#t-fps", R.sustainedFps);
+    }
+  }
+  rows("#t-fps", R.sustainedFps);
+  dump();
+  ev.target.disabled = false;
+};
+
+$("#b-torch").onclick = async (ev) => {
+  ev.target.disabled = true;
+  let s = null;
+  try {
+    s = await openStream(PREVIEW_CONSTRAINT);
+    const track = s.getVideoTracks()[0];
+    const caps = track.getCapabilities ? track.getCapabilities() : {};
+    R.torch = { "capabilities に torch がある": !!caps.torch };
+    if (!caps.torch) {
+      R.torch["結果"] = "この端末では torch を制御できない";
+    } else {
+      await track.applyConstraints({ advanced: [{ torch: true }] });
+      R.torch["点灯 applyConstraints"] = "成功(目視で確認してください)";
+      R.torch["点灯後の settings.torch"] = String(track.getSettings().torch);
+      await new Promise((r) => setTimeout(r, 2000));
+      await track.applyConstraints({ advanced: [{ torch: false }] });
+      R.torch["消灯"] = "成功";
+    }
+  } catch (err) {
+    R.torch = Object.assign(R.torch ?? {}, { error: err.name + ": " + err.message });
+  } finally {
+    if (s) s.getTracks().forEach((t) => t.stop());
+  }
+  rows("#t-torch", R.torch);
+  dump();
+  ev.target.disabled = false;
 };
 
 /* ---------- 結果出力 ---------- */

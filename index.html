@@ -4,6 +4,11 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
 <title>pwa-doc-scan</title>
+<link rel="manifest" href="./manifest.webmanifest">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-status-bar-style" content="black">
+<meta name="theme-color" content="#111111">
+<link rel="apple-touch-icon" href="./icon.svg">
 <style>
   :root { color-scheme: light dark; --bg:#fff; --fg:#111; --mut:#666; --line:#ddd; --card:#f7f7f8; }
   @media (prefers-color-scheme: dark) { :root { --bg:#121214; --fg:#eee; --mut:#999; --line:#333; --card:#1c1c20; } }
@@ -24,9 +29,9 @@
 <p class="lead">書類スキャン特化の PWA。撮影・処理・保存をすべて端末内で完結させます。</p>
 
 <div class="card">
-  <b>現在 M0.5(実機能力計測)の段階です。</b><br>
-  アプリ本体(撮影 UI)はまだありません。まず下の計測ページを実機で 1 周してください。
-  その数値で M1 の設計を確定させます。
+  <b>現在 M1(実装中)です。撮影 UI はまだありません。</b><br>
+  計測ページで <b>6. 解像度の切り替え</b> / <b>7. 実フレームレート</b> / <b>8. ライト</b> を
+  実機で測ってください。撮影方式(プレビュー解像度をどうするか)がその数値で決まります。
 </div>
 
 <p><a class="btn" href="probe/">実機能力計測ページを開く</a></p>
@@ -53,6 +58,7 @@
     "PDF 生成 (CompressionStream)": (() => {
       try { new CompressionStream("deflate"); return true; } catch { return false; } })(),
     "ホーム画面から起動している": standalone,
+    "manifest の display-mode が効いている": matchMedia("(display-mode: standalone)").matches,
   };
   const t = document.getElementById("t");
   for (const [k, v] of Object.entries(rows)) {

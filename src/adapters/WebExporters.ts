@@ -9,6 +9,11 @@ function toFile(payload: ExportPayload): File {
 /**
  * 共有シートへ書き出す。iOS での主動線(D-005)。
  * 実機(iOS 18.7 / Safari 26.6)で PDF の書き出しに成功することを確認済み。
+ *
+ * **`share()` には files 以外を渡さないこと(D-038)。**
+ * iOS は files と一緒に title / text / url を渡すと、それらを別の共有アイテムとして扱う。
+ * 「ファイルに保存」を選ぶと、PDF に加えてその文字列が .txt として書き出されてしまう。
+ * ファイル名は File 側が持っているので、title は不要。
  */
 export class ShareExporter implements Exporter {
   readonly id = "share";
@@ -27,7 +32,7 @@ export class ShareExporter implements Exporter {
       return { ok: false, reason: "UNSUPPORTED_NO_SHARE_FILES" };
     }
     try {
-      await navigator.share({ files: [toFile(payload)], title: payload.filename });
+      await navigator.share({ files: [toFile(payload)] });
       return { ok: true };
     } catch (err) {
       // 共有シートを閉じただけの場合も AbortError で来る。失敗として扱わない

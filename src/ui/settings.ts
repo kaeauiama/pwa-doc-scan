@@ -1,6 +1,7 @@
 import { CONFIG } from "../core/config.ts";
 import type { BinarizeMethod } from "../core/binarize.ts";
 import type { OutputFormat, RenderMode } from "../pipeline.ts";
+import type { CropMode } from "../core/crop.ts";
 
 const KEY = "pwa-doc-scan:settings:v1";
 
@@ -11,6 +12,7 @@ export interface Settings {
   whiten: boolean;
   binarizeStrength: number;
   binarizeMethod: BinarizeMethod;
+  crop: CropMode;
 }
 
 export const DEFAULT_SETTINGS: Settings = {
@@ -20,11 +22,13 @@ export const DEFAULT_SETTINGS: Settings = {
   whiten: true,
   binarizeStrength: CONFIG.binarize.defaultStrength,
   binarizeMethod: CONFIG.binarize.method,
+  crop: "quad",
 };
 
 const MODES: RenderMode[] = ["bilevel", "grayscale", "color"];
 const FORMATS: OutputFormat[] = ["pdf", "image"];
 const METHODS: BinarizeMethod[] = ["sauvola", "bradley"];
+const CROPS: CropMode[] = ["quad", "rect"];
 
 /**
  * 出力の設定だけを端末に覚えておく。
@@ -55,6 +59,7 @@ export function loadSettings(): Settings {
       binarizeMethod: METHODS.includes(parsed.binarizeMethod as BinarizeMethod)
         ? (parsed.binarizeMethod as BinarizeMethod)
         : DEFAULT_SETTINGS.binarizeMethod,
+      crop: CROPS.includes(parsed.crop as CropMode) ? (parsed.crop as CropMode) : DEFAULT_SETTINGS.crop,
     };
   } catch {
     // 壊れた値が入っていても既定で動く。設定が原因でアプリが起動しないのは避ける

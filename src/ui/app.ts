@@ -8,6 +8,7 @@ import { CanvasJpegEncoder } from "../adapters/CanvasJpegEncoder.ts";
 import { DownloadExporter, ShareExporter, exportWithFallback } from "../adapters/WebExporters.ts";
 import { SourceError } from "../ports/ImageSource.ts";
 import { CornerEditor } from "./CornerEditor.ts";
+import type { CropMode } from "../core/crop.ts";
 import { bilevelToCanvas, containFit, drawQuad, rgbaToCanvas } from "./render.ts";
 import { clampQuad } from "../core/warp.ts";
 import { collectEnvironment, getFailures, isStandalone, recordFailure } from "./diagnostics.ts";
@@ -66,6 +67,8 @@ let displayCanvas: HTMLCanvasElement | null = null;
 /** 元画像 → 表示画像 の倍率 */
 let displayScale = 1;
 let detectedQuad: Quad | null = null;
+/** 検出の結果を伝える一文。切り抜き方法の説明と合わせて表示する */
+let detectionNote = "";
 
 const settings = loadSettings();
 let mode: RenderMode = settings.mode;
@@ -74,10 +77,11 @@ let dpi: number = settings.dpi;
 let whiten: boolean = settings.whiten;
 let binarizeStrength: number = settings.binarizeStrength;
 let binarizeMethod: BinarizeMethod = settings.binarizeMethod;
+let crop: CropMode = settings.crop;
 
 /** 選択を端末に覚えておく。画像は一切置かない(HC-3) */
 function persist(): void {
-  saveSettings({ mode, format, dpi, whiten, binarizeStrength, binarizeMethod });
+  saveSettings({ mode, format, dpi, whiten, binarizeStrength, binarizeMethod, crop });
 }
 let lastOutput: { bytes: Uint8Array; mimeType: string; extension: string } | null = null;
 let lastScan: ScanResult | null = null;
@@ -273,18 +277,19 @@ async function goToAdjust(frame: Rgba, source: string): Promise<void> {
     ctx.drawImage(full, 0, 0, displayCanvas.width, displayCanvas.height);
 
     const detection = detectDocumentQuad(rgbaToGray(frame));
-    const note = $("adjust-note");
     if (detection.ok) {
       // 検出は画像の外側まで角を許すが、外に出るとハンドルを掴めなくなる
       detectedQuad = clampQuad(detection.quad, frame.width, frame.height);
-      note.textContent = `輪郭を検出しました(確からしさ ${(detection.confidence * 100).toFixed(0)}%)。ずれていれば四隅をドラッグして直してください。`;
+      detectionNote = `輪郭を検出しました(確からしさ ${(detection.confidence * 100).toFixed(0)}%)。ずれていればハンドルをドラッグして直してください。`;
     } else {
       detectedQuad = fullFrameQuad(frame.width, frame.height);
-      note.textContent = "輪郭を自動検出できませんでした。四隅をドラッグして書類の角に合わせてください。";
+      detectionNote = "輪郭を自動検出できませんでした。ハンドルをドラッグして範囲を合わせてください。";
       recordFailure(source, detection.reason);
     }
 
+    updateAdjustNote();
     editor ??= new CornerEditor(editorCanvas);
+    editor.setMode(crop);
     editor.setImage(displayCanvas, scaleQuad(detectedQuad, displayScale));
     show("adjust");
     // レイアウト確定後にもう一度サイズを合わせる
@@ -294,6 +299,18 @@ async function goToAdjust(frame: Rgba, source: string): Promise<void> {
   } finally {
     setBusy(false);
   }
+}
+
+/**
+ * 検出の結果と、切り抜き方法ごとの注意を 1 か所にまとめて出す。
+ * 四角モードは歪まない代わりに斜めから撮ると余白が入る、という取引を明示する。
+ */
+function updateAdjustNote(): void {
+  const hint =
+    crop === "rect"
+      ? "四角モードは歪みませんが、斜めから撮ると周りの余白が入ります。"
+      : "ゆがみ補正は斜めからでも四角く直せますが、四隅がずれると中身が伸び縮みします。";
+  $("adjust-note").textContent = detectionNote ? `${detectionNote} ${hint}` : hint;
 }
 
 function scaleQuad(quad: Quad, scale: number): Quad {
@@ -652,6 +669,16 @@ $("mode-group").addEventListener("click", (event) => {
   persist();
 });
 
+$("crop-group").addEventListener("click", (event) => {
+  const button = (event.target as HTMLElement).closest<HTMLButtonElement>("button[data-crop]");
+  if (!button) return;
+  crop = button.dataset.crop as CropMode;
+  setSegmented($("crop-group"), crop, "crop");
+  editor?.setMode(crop);
+  updateAdjustNote();
+  persist();
+});
+
 $("format-group").addEventListener("click", (event) => {
   const button = (event.target as HTMLElement).closest<HTMLButtonElement>("button[data-format]");
   if (!button) return;
@@ -683,6 +710,7 @@ $("binarize-group").addEventListener("click", (event) => {
   if (!button) return;
   binarizeMethod = button.dataset.binarize as BinarizeMethod;
   setSegmented($("binarize-group"), binarizeMethod, "binarize");
+setSegmented($("crop-group"), crop, "crop");
   persist();
 });
 
@@ -801,6 +829,7 @@ setSegmented($("mode-group"), mode, "mode");
 setSegmented($("format-group"), format, "format");
 setSegmented($("dpi-group"), String(dpi), "dpi");
 setSegmented($("binarize-group"), binarizeMethod, "binarize");
+setSegmented($("crop-group"), crop, "crop");
 $<HTMLInputElement>("opt-whiten").checked = whiten;
 $<HTMLInputElement>("opt-strength").value = String(binarizeStrength);
 syncOptionVisibility();

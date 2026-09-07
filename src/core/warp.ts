@@ -68,6 +68,38 @@ export function estimateOutputSize(quad: Quad, maxLongEdge?: number): { width: n
 }
 
 /**
+ * 四隅を含む最小の軸並行矩形を、四隅の形で返す。
+ *
+ * 矩形を矩形に写す射影変換は単なる拡大縮小になり、**原理的に歪みが出ない**。
+ * 四隅を独立に動かすと、わずかなずれでも台形になって中身が不均一に伸びるため、
+ * 「多少雑でもいいから歪ませたくない」場合はこちらを使う。
+ */
+export function boundingQuad(quad: Quad): Quad {
+  const xs = [quad[0].x, quad[1].x, quad[2].x, quad[3].x];
+  const ys = [quad[0].y, quad[1].y, quad[2].y, quad[3].y];
+  const x0 = Math.min(...xs);
+  const x1 = Math.max(...xs);
+  const y0 = Math.min(...ys);
+  const y1 = Math.max(...ys);
+  return [
+    { x: x0, y: y0 },
+    { x: x1, y: y0 },
+    { x: x1, y: y1 },
+    { x: x0, y: y1 },
+  ];
+}
+
+/** 軸並行の矩形かどうか。歪みが出ない切り抜きになっているかの確認に使う。 */
+export function isAxisAligned(quad: Quad, tolerance = 1e-6): boolean {
+  return (
+    Math.abs(quad[0].y - quad[1].y) <= tolerance &&
+    Math.abs(quad[2].y - quad[3].y) <= tolerance &&
+    Math.abs(quad[0].x - quad[3].x) <= tolerance &&
+    Math.abs(quad[1].x - quad[2].x) <= tolerance
+  );
+}
+
+/**
  * 四隅を画像の内側に収める。
  *
  * 検出は画像の外側 20% まで角を許している(書類が画面からはみ出している構図に対応するため)。
@@ -124,16 +156,24 @@ export function warpGray(src: Gray8, srcQuad: Quad, width: number, height: numbe
       const sx = (inv[0] * px + inv[1] * py + inv[2]) / w;
       const sy = (inv[3] * px + inv[4] * py + inv[5]) / w;
 
-      if (sx < 0 || sy < 0 || sx > sw - 1 || sy > sh - 1) {
+      if (sx < 0 || sy < 0 || sx > sw || sy > sh) {
         out[y * width + x] = 255;
         continue;
       }
-      const x0 = sx | 0;
-      const y0 = sy | 0;
+      // 出力は画素の中心を x+0.5 として写しているので、入力側も中心基準に揃える。
+      // ここを揃えないと常に半画素ずれ、等倍で切り出しても元と一致しない
+      let u = sx - 0.5;
+      let v = sy - 0.5;
+      if (u < 0) u = 0;
+      else if (u > sw - 1) u = sw - 1;
+      if (v < 0) v = 0;
+      else if (v > sh - 1) v = sh - 1;
+      const x0 = u | 0;
+      const y0 = v | 0;
       const x1 = x0 + 1 > sw - 1 ? sw - 1 : x0 + 1;
       const y1 = y0 + 1 > sh - 1 ? sh - 1 : y0 + 1;
-      const fx = sx - x0;
-      const fy = sy - y0;
+      const fx = u - x0;
+      const fy = v - y0;
       const top = sd[y0 * sw + x0] * (1 - fx) + sd[y0 * sw + x1] * fx;
       const bottom = sd[y1 * sw + x0] * (1 - fx) + sd[y1 * sw + x1] * fx;
       out[y * width + x] = Math.round(top * (1 - fy) + bottom * fy);
@@ -168,19 +208,26 @@ export function warpRgba(src: Rgba, srcQuad: Quad, width: number, height: number
       const sy = (inv[3] * px + inv[4] * py + inv[5]) / w;
       const o = (y * width + x) * 4;
 
-      if (sx < 0 || sy < 0 || sx > sw - 1 || sy > sh - 1) {
+      if (sx < 0 || sy < 0 || sx > sw || sy > sh) {
         out[o] = 255;
         out[o + 1] = 255;
         out[o + 2] = 255;
         out[o + 3] = 255;
         continue;
       }
-      const x0 = sx | 0;
-      const y0 = sy | 0;
+      // warpGray と同じく中心基準に揃える
+      let u = sx - 0.5;
+      let v = sy - 0.5;
+      if (u < 0) u = 0;
+      else if (u > sw - 1) u = sw - 1;
+      if (v < 0) v = 0;
+      else if (v > sh - 1) v = sh - 1;
+      const x0 = u | 0;
+      const y0 = v | 0;
       const x1 = x0 + 1 > sw - 1 ? sw - 1 : x0 + 1;
       const y1 = y0 + 1 > sh - 1 ? sh - 1 : y0 + 1;
-      const fx = sx - x0;
-      const fy = sy - y0;
+      const fx = u - x0;
+      const fy = v - y0;
       const i00 = (y0 * sw + x0) * 4;
       const i01 = (y0 * sw + x1) * 4;
       const i10 = (y1 * sw + x0) * 4;

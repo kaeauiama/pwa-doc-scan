@@ -62,8 +62,15 @@
     <div class="stage">
       <canvas id="editor"></canvas>
     </div>
-    <p class="note" id="adjust-note">四隅をドラッグして、書類の角に合わせてください。</p>
+    <p class="note" id="adjust-note">ハンドルをドラッグして範囲を合わせてください。</p>
     <div class="options">
+      <div class="opt">
+        <span>切り抜き</span>
+        <div class="segmented" id="crop-group" role="radiogroup" aria-label="切り抜きの方法">
+          <button type="button" data-crop="quad" class="on">ゆがみ補正</button>
+          <button type="button" data-crop="rect">四角</button>
+        </div>
+      </div>
       <div class="opt">
         <span>出力</span>
         <div class="segmented" id="mode-group" role="radiogroup" aria-label="出力モード">

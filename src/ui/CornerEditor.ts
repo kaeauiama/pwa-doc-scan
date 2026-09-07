@@ -1,12 +1,18 @@
+import { boundingQuad } from "../core/warp.ts";
+import { EDGE_HANDLE_START, HANDLE_COUNT, handlePosition, moveHandle } from "../core/crop.ts";
 import { containFit, drawQuad, toDisplay, toSource } from "./render.ts";
+import type { CropMode } from "../core/crop.ts";
 import type { Point, Quad } from "../core/types.ts";
 
-const HANDLE_RADIUS = 11;
+export type { CropMode };
+
+const CORNER_RADIUS = 11;
+const EDGE_RADIUS = 9;
 /** 指で掴める範囲。見た目のハンドルより大きくする */
 const GRAB_RADIUS = 30;
 
 /**
- * 撮影画像の上に四隅のハンドルを出し、ドラッグで動かせるようにする(REQ-03)。
+ * 撮影画像の上にハンドルを出し、切り抜き範囲をドラッグで決める(REQ-03 / REQ-26)。
  *
  * 自動検出は色帯のある原稿で外すことがあり、しかもそのとき確信度が下がらない(D-028)。
  * そのため検出結果は常にこの編集画面を通す。誤検出が致命的にならないのはこの動線があるため。
@@ -16,7 +22,10 @@ export class CornerEditor {
   readonly #ctx: CanvasRenderingContext2D;
   #image: HTMLCanvasElement | null = null;
   #quad: Quad | null = null;
+  #mode: CropMode = "quad";
   #dragging = -1;
+  /** ドラッグ開始時の指の位置と四隅。辺の移動量を出すのに使う */
+  #dragOrigin: { point: Point; quad: Quad } | null = null;
   #ratio = 1;
 
   onChange: (() => void) | null = null;
@@ -35,7 +44,7 @@ export class CornerEditor {
 
   setImage(image: HTMLCanvasElement, quad: Quad): void {
     this.#image = image;
-    this.#quad = quad;
+    this.#quad = this.#mode === "rect" ? boundingQuad(quad) : quad;
     this.layout();
   }
 
@@ -45,7 +54,23 @@ export class CornerEditor {
   }
 
   setQuad(quad: Quad): void {
-    this.#quad = quad;
+    this.#quad = this.#mode === "rect" ? boundingQuad(quad) : quad;
+    this.render();
+  }
+
+  getMode(): CropMode {
+    return this.#mode;
+  }
+
+  /**
+   * 切り抜きの方法を変える。
+   * `rect` にするときは、いまの範囲を囲む最小の矩形にそろえる。
+   * `quad` に戻すときは形をそのまま引き継ぐ(矩形は四角形の一種なので情報を失わない)。
+   */
+  setMode(mode: CropMode): void {
+    if (this.#mode === mode) return;
+    this.#mode = mode;
+    if (mode === "rect" && this.#quad) this.#quad = boundingQuad(this.#quad);
     this.render();
   }
 
@@ -96,11 +121,32 @@ export class CornerEditor {
     this.#ctx.fill("evenodd");
     this.#ctx.restore();
 
-    drawQuad(this.#ctx, quad, fit, {
-      stroke: "#22c55e",
-      lineWidth: 2 * this.#ratio,
-      handleRadius: HANDLE_RADIUS * this.#ratio,
-    });
+    drawQuad(this.#ctx, quad, fit, { stroke: "#22c55e", lineWidth: 2 * this.#ratio });
+
+    for (const p of pts) this.#drawHandle(p, CORNER_RADIUS * this.#ratio, false);
+    for (let edge = 0; edge < 4; edge++) {
+      this.#drawHandle(toDisplay(handlePosition(quad, EDGE_HANDLE_START + edge), fit), EDGE_RADIUS * this.#ratio, true);
+    }
+  }
+
+  /** 隅は丸、辺は角丸の四角。掴んだときの効き方が違うので見た目でも分ける */
+  #drawHandle(p: Point, radius: number, isEdge: boolean): void {
+    const ctx = this.#ctx;
+    ctx.save();
+    ctx.beginPath();
+    if (isEdge) {
+      const r = radius * 0.9;
+      if (typeof ctx.roundRect === "function") ctx.roundRect(p.x - r, p.y - r, r * 2, r * 2, r * 0.45);
+      else ctx.rect(p.x - r, p.y - r, r * 2, r * 2);
+    } else {
+      ctx.arc(p.x, p.y, radius, 0, Math.PI * 2);
+    }
+    ctx.fillStyle = "#ffffff";
+    ctx.fill();
+    ctx.lineWidth = 2 * this.#ratio;
+    ctx.strokeStyle = "#22c55e";
+    ctx.stroke();
+    ctx.restore();
   }
 
   #eventPoint(event: PointerEvent): Point {
@@ -117,36 +163,58 @@ export class CornerEditor {
   }
 
   #onDown = (event: PointerEvent): void => {
-    if (!this.#image || !this.#quad) return;
+    const quad = this.#quad;
+    if (!this.#image || !quad) return;
     const p = this.#eventPoint(event);
     const fit = this.#fit();
+    const limit = GRAB_RADIUS * this.#ratio;
+
     let nearest = -1;
-    let best = GRAB_RADIUS * this.#ratio;
-    this.#quad.forEach((corner, i) => {
+    let best = limit;
+    // 隅を優先する。辺の中点は隅と近いことがあるため
+    quad.forEach((corner, i) => {
       const d = Math.hypot(p.x - toDisplay(corner, fit).x, p.y - toDisplay(corner, fit).y);
       if (d < best) {
         best = d;
         nearest = i;
       }
     });
+    if (nearest < 0) {
+      for (let handle = EDGE_HANDLE_START; handle < HANDLE_COUNT; handle++) {
+        const mid = toDisplay(handlePosition(quad, handle), fit);
+        const d = Math.hypot(p.x - mid.x, p.y - mid.y);
+        if (d < best) {
+          best = d;
+          nearest = handle;
+        }
+      }
+    }
     if (nearest < 0) return;
+
     this.#dragging = nearest;
+    this.#dragOrigin = { point: toSource(p, fit), quad };
     this.#canvas.setPointerCapture(event.pointerId);
     event.preventDefault();
   };
 
   #onMove = (event: PointerEvent): void => {
-    if (this.#dragging < 0 || !this.#quad || !this.#image) return;
-    const fit = this.#fit();
-    const raw = toSource(this.#eventPoint(event), fit);
-    // 画像の外へは出さない
-    const clamped: Point = {
-      x: Math.max(0, Math.min(this.#image.width, raw.x)),
-      y: Math.max(0, Math.min(this.#image.height, raw.y)),
-    };
-    const next = [...this.#quad];
-    next[this.#dragging] = clamped;
-    this.#quad = next as unknown as Quad;
+    const origin = this.#dragOrigin;
+    const image = this.#image;
+    if (this.#dragging < 0 || !origin || !image) return;
+
+    const here = toSource(this.#eventPoint(event), this.#fit());
+    const delta: Point = { x: here.x - origin.point.x, y: here.y - origin.point.y };
+
+    this.#quad = moveHandle(
+      this.#mode,
+      origin.quad,
+      this.#dragging,
+      here,
+      delta,
+      image.width,
+      image.height,
+    );
+
     this.render();
     event.preventDefault();
   };
@@ -154,6 +222,7 @@ export class CornerEditor {
   #onUp = (event: PointerEvent): void => {
     if (this.#dragging < 0) return;
     this.#dragging = -1;
+    this.#dragOrigin = null;
     if (this.#canvas.hasPointerCapture(event.pointerId)) {
       this.#canvas.releasePointerCapture(event.pointerId);
     }

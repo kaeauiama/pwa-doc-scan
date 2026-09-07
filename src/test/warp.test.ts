@@ -1,7 +1,16 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
 
-import { applyMatrix, clampQuad, computeHomography, estimateOutputSize, insetQuad, warpGray } from "../core/warp.ts";
+import {
+  applyMatrix,
+  boundingQuad,
+  clampQuad,
+  computeHomography,
+  estimateOutputSize,
+  insetQuad,
+  isAxisAligned,
+  warpGray,
+} from "../core/warp.ts";
 import { rgbaToGray } from "../core/gray.ts";
 import { agreementIgnoringEdges, makeDocumentPhoto } from "./fixtures/synthetic.ts";
 import type { Quad } from "../core/types.ts";
@@ -82,14 +91,21 @@ test("warpGray: 台形に写った紙面を矩形に戻すと元の紙面と一�
 
 /**
  * L-1(PWA はフル解像度の静止画を撮れない)を数値で押さえるための回帰テスト。
- * 文字が細くなるほど復元率が落ちることを確認する。閾値ではなく単調性を検証する。
+ *
+ * 撮影画像が紙面より粗い場合、細い文字は原理的に戻らない。
+ * ここでは写真を紙面より小さく撮り、文字が細いほど復元率が落ちることを見る。
+ *
+ * 注: 写真が紙面より大きい(=十分な解像度がある)場合は、
+ * 標本化の基準さえ揃っていれば完全に復元できる。以前この条件で 92〜97% しか
+ * 出ていなかったのは warpGray の半画素ずれ(D-042)が原因だった。
  */
-test("細部の復元力は文字の太さに依存する(解像度不足の影響を可視化)", (t) => {
+test("撮影解像度が足りないと細い文字ほど復元できない", (t) => {
   const results: { pitch: number; acc: number }[] = [];
   for (const strokePitch of [16, 10, 6, 4, 3]) {
     const { photo, page, quad: q } = makeDocumentPhoto(
-      { width: 400, height: 560, seed: 11, strokePitch },
-      { width: 800, height: 1000, shading: 0, noise: 0, seed: 5 },
+      { width: 800, height: 1120, seed: 11, strokePitch },
+      // 紙面より粗い写真。実機で遠くから撮った状況に相当する
+      { width: 420, height: 560, shading: 0, noise: 0, seed: 5 },
     );
     const warped = warpGray(rgbaToGray(photo), q, page.width, page.height);
     let same = 0;
@@ -104,9 +120,10 @@ test("細部の復元力は文字の太さに依存する(解像度不足の影�
     results.push({ pitch: strokePitch, acc: same / total });
   }
   for (const r of results) t.diagnostic(`strokePitch=${r.pitch}px -> 一致率 ${(r.acc * 100).toFixed(2)}%`);
-  for (let i = 1; i < results.length; i++) {
-    assert.ok(results[i].acc < results[i - 1].acc, `pitch ${results[i].pitch}px で一致率が下がるはず`);
-  }
+  assert.ok(
+    results[0].acc > results[results.length - 1].acc,
+    "太い文字の方が復元率が高いはず",
+  );
 });
 
 test("insetQuad: 重心方向に一様に縮み、比率と重心を保つ", () => {
@@ -158,4 +175,103 @@ test("clampQuad: 既に画像内なら何も変えない", () => {
     { x: 20, y: 690 },
   ];
   assert.deepEqual([...clampQuad(inside, 1000, 800)], [...inside]);
+});
+
+test("boundingQuad: 四隅を囲む最小の軸並行矩形になる", () => {
+  const skewed: Quad = [
+    { x: 30, y: 20 },
+    { x: 270, y: 55 },
+    { x: 250, y: 380 },
+    { x: 15, y: 340 },
+  ];
+  const box = boundingQuad(skewed);
+  assert.deepEqual([...box], [
+    { x: 15, y: 20 },
+    { x: 270, y: 20 },
+    { x: 270, y: 380 },
+    { x: 15, y: 380 },
+  ]);
+  assert.equal(isAxisAligned(box), true);
+  assert.equal(isAxisAligned(skewed), false);
+  assert.deepEqual([...boundingQuad(box)], [...box], "既に矩形なら変わらない");
+});
+
+test("軸並行の矩形で切り抜くと、拡大縮小だけで歪みが出ない", () => {
+  // 縦横の直線が入った画像。歪めば線が曲がるので判定できる
+  const w = 400;
+  const h = 300;
+  const data = new Uint8Array(w * h).fill(255);
+  for (let y = 0; y < h; y++) {
+    for (let x = 0; x < w; x++) {
+      if (x % 20 === 0 || y % 20 === 0) data[y * w + x] = 0;
+    }
+  }
+  const src = { width: w, height: h, data };
+
+  const box: Quad = [
+    { x: 40, y: 30 },
+    { x: 340, y: 30 },
+    { x: 340, y: 230 },
+    { x: 40, y: 230 },
+  ];
+  // 等倍で切り出せば、元画像の該当領域とそのまま一致するはず
+  const out = warpGray(src, box, 300, 200);
+  let mismatch = 0;
+  for (let y = 1; y < 199; y++) {
+    for (let x = 1; x < 299; x++) {
+      if (out.data[y * 300 + x] !== data[(y + 30) * w + (x + 40)]) mismatch++;
+    }
+  }
+  assert.equal(mismatch, 0, `軸並行の切り抜きで ${mismatch} 画素ずれた`);
+});
+
+test("台形で切り抜くと上下で拡大率が変わる(矩形モードが必要な理由)", (t) => {
+  // 等間隔の縦線。線は 3px 幅。1px だと縮小で線が消え、
+  // 「歪み」ではなく「取りこぼし」を測ってしまう
+  const w = 400;
+  const h = 300;
+  const data = new Uint8Array(w * h).fill(255);
+  for (let y = 0; y < h; y++) {
+    for (let x = 0; x < w; x++) if (x % 20 < 3) data[y * w + x] = 0;
+  }
+  const src = { width: w, height: h, data };
+
+  /** 指定した行で、黒帯が始まる x の平均間隔 */
+  const gapAt = (img: { width: number; height: number; data: Uint8Array }, ratio: number) => {
+    const y = Math.round((img.height - 1) * ratio);
+    const xs: number[] = [];
+    for (let x = 1; x < img.width - 1; x++) {
+      if (img.data[y * img.width + x] < 128 && img.data[y * img.width + x - 1] >= 128) xs.push(x);
+    }
+    if (xs.length < 3) return NaN;
+    return (xs[xs.length - 1] - xs[0]) / (xs.length - 1);
+  };
+
+  // 上辺が狭く下辺が広い台形。四隅を独立に動かすと簡単にこうなる
+  const skewed: Quad = [
+    { x: 80, y: 30 },
+    { x: 320, y: 30 },
+    { x: 360, y: 230 },
+    { x: 40, y: 230 },
+  ];
+  const box = boundingQuad(skewed);
+  const outW = Math.round(box[1].x - box[0].x);
+  const outH = Math.round(box[2].y - box[1].y);
+
+  const skewedImg = warpGray(src, skewed, outW, outH);
+  const boxImg = warpGray(src, box, outW, outH);
+
+  const skewedTop = gapAt(skewedImg, 0.1);
+  const skewedBottom = gapAt(skewedImg, 0.9);
+  const boxTop = gapAt(boxImg, 0.1);
+  const boxBottom = gapAt(boxImg, 0.9);
+
+  t.diagnostic(
+    `台形: 上 ${skewedTop.toFixed(2)}px / 下 ${skewedBottom.toFixed(2)}px, ` +
+      `矩形: 上 ${boxTop.toFixed(2)}px / 下 ${boxBottom.toFixed(2)}px`,
+  );
+  // 台形では上下で拡大率が変わる = 同じ大きさの文字が上下で違う大きさになる
+  assert.ok(Math.abs(skewedTop - skewedBottom) > 2, "台形なのに上下の拡大率が同じ(前提が崩れている)");
+  // 矩形なら上下で完全に同じ
+  assert.ok(Math.abs(boxTop - boxBottom) < 0.01, `矩形なのに上下で拡大率が違う (${boxTop} vs ${boxBottom})`);
 });

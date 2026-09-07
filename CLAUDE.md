@@ -55,7 +55,7 @@ npm run build      # dist/ を生成(GitHub Pages が使う)
 - アダプタ: `LiveCameraSource` / `FileImportSource` / `CanvasJpegEncoder` /
   `ShareExporter` / `DownloadExporter`
 - UI: `src/ui/`。ホーム / 撮影 / 四隅調整 / 結果 / 診断 の 5 画面。
-  ライブ輪郭オーバーレイ、8 ハンドルの範囲調整(ゆがみ補正 / 矩形)、
+  ライブ輪郭オーバーレイ、範囲調整(ゆがみ補正 / 矩形、隅・辺・範囲ごとの移動)、
   モード・DPI 切替、torch、ページ一覧、
   ブレ検出の警告、白黒2値の詳細設定(文字の濃さ・方式)、設定の記憶、
   共有シートとダウンロード、理由コード付きの失敗表示、PDF / 画像の切替

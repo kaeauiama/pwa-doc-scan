@@ -4,9 +4,11 @@ import assert from "node:assert/strict";
 import {
   EDGE_HANDLE_START,
   MIN_CROP_SIZE,
+  MOVE_HANDLE,
   edgeMidpoint,
   handlePosition,
   moveHandle,
+  pointInQuad,
 } from "../core/crop.ts";
 import { isAxisAligned } from "../core/warp.ts";
 import type { Point, Quad } from "../core/types.ts";
@@ -136,4 +138,45 @@ test("自由な四隅: 辺を動かしても画像の外に出ず、辺は傾か
 test("範囲外のハンドル番号は何もしない", () => {
   assert.deepEqual([...moveHandle("rect", rect, -1, { x: 0, y: 0 }, { x: 0, y: 0 }, W, H)], [...rect]);
   assert.deepEqual([...moveHandle("quad", skewed, 99, { x: 0, y: 0 }, { x: 0, y: 0 }, W, H)], [...skewed]);
+});
+
+test("pointInQuad: 内側と外側を正しく判定する", () => {
+  assert.equal(pointInQuad(rect, { x: 500, y: 400 }), true, "中心");
+  assert.equal(pointInQuad(rect, { x: 50, y: 400 }), false, "左外");
+  assert.equal(pointInQuad(rect, { x: 950, y: 400 }), false, "右外");
+  assert.equal(pointInQuad(rect, { x: 500, y: 50 }), false, "上外");
+  assert.equal(pointInQuad(rect, { x: 500, y: 750 }), false, "下外");
+  assert.equal(pointInQuad(skewed, { x: 500, y: 400 }), true, "傾いた四角形の内側");
+  assert.equal(pointInQuad(skewed, { x: 130, y: 700 }), false, "傾いた四角形の外側");
+});
+
+test("範囲ごとの移動: 形を変えずに平行移動する", () => {
+  const moved = moveHandle("quad", skewed, MOVE_HANDLE, { x: 0, y: 0 }, { x: 40, y: -30 }, W, H);
+  for (let i = 0; i < 4; i++) {
+    assert.equal(moved[i].x, skewed[i].x + 40, `隅 ${i} の x`);
+    assert.equal(moved[i].y, skewed[i].y - 30, `隅 ${i} の y`);
+  }
+  // 辺の長さが全て保たれる = 形が変わっていない
+  for (let i = 0; i < 4; i++) {
+    const j = (i + 1) % 4;
+    const before = Math.hypot(skewed[j].x - skewed[i].x, skewed[j].y - skewed[i].y);
+    const after = Math.hypot(moved[j].x - moved[i].x, moved[j].y - moved[i].y);
+    assert.ok(Math.abs(before - after) < 1e-9, `辺 ${i} の長さが変わった`);
+  }
+});
+
+test("範囲ごとの移動: 画像の外に出ず、形も崩さない", () => {
+  const moved = moveHandle("rect", rect, MOVE_HANDLE, { x: 0, y: 0 }, { x: 5000, y: 5000 }, W, H);
+  assert.equal(widthOf(moved), widthOf(rect), "幅が変わった");
+  assert.equal(heightOf(moved), heightOf(rect), "高さが変わった");
+  assert.equal(moved[1].x, W, "右端で止まる");
+  assert.equal(moved[2].y, H, "下端で止まる");
+  for (const p of moved) assert.ok(p.x >= 0 && p.x <= W && p.y >= 0 && p.y <= H);
+});
+
+test("範囲ごとの移動: 矩形モードでも軸並行を保つ", () => {
+  for (const d of [{ x: -400, y: 0 }, { x: 0, y: 300 }, { x: 120, y: -90 }]) {
+    const moved = moveHandle("rect", rect, MOVE_HANDLE, { x: 0, y: 0 }, d, W, H);
+    assert.equal(isAxisAligned(moved), true);
+  }
 });

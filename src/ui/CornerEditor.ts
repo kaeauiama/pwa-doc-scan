@@ -1,5 +1,5 @@
 import { boundingQuad } from "../core/warp.ts";
-import { EDGE_HANDLE_START, HANDLE_COUNT, handlePosition, moveHandle } from "../core/crop.ts";
+import { EDGE_HANDLE_START, HANDLE_COUNT, MOVE_HANDLE, handlePosition, moveHandle, pointInQuad } from "../core/crop.ts";
 import { containFit, drawQuad, toDisplay, toSource } from "./render.ts";
 import type { CropMode } from "../core/crop.ts";
 import type { Point, Quad } from "../core/types.ts";
@@ -7,9 +7,29 @@ import type { Point, Quad } from "../core/types.ts";
 export type { CropMode };
 
 const CORNER_RADIUS = 11;
-const EDGE_RADIUS = 9;
+/** 辺のハンドルの太さ(半分) */
+const EDGE_THICKNESS = 6;
+/**
+ * 辺のハンドルの長さ(半分)。辺が短いときは辺の割合で縮める。
+ * 辺の 28% x 2 = 56% を覆い、両端の 22% ずつを隅のハンドルに残す。
+ */
+const EDGE_HALF_LENGTH = 42;
+const EDGE_LENGTH_RATIO = 0.28;
 /** 指で掴める範囲。見た目のハンドルより大きくする */
 const GRAB_RADIUS = 30;
+/** 辺の棒からどれだけ離れても掴めるか */
+const EDGE_GRAB = 20;
+
+/** 点と線分の距離 */
+function distanceToSegment(p: Point, a: Point, b: Point): number {
+  const dx = b.x - a.x;
+  const dy = b.y - a.y;
+  const lenSq = dx * dx + dy * dy;
+  if (lenSq < 1e-9) return Math.hypot(p.x - a.x, p.y - a.y);
+  let t = ((p.x - a.x) * dx + (p.y - a.y) * dy) / lenSq;
+  t = t < 0 ? 0 : t > 1 ? 1 : t;
+  return Math.hypot(p.x - (a.x + dx * t), p.y - (a.y + dy * t));
+}
 
 /**
  * 撮影画像の上にハンドルを出し、切り抜き範囲をドラッグで決める(REQ-03 / REQ-26)。
@@ -99,6 +119,25 @@ export class CornerEditor {
     this.render();
   }
 
+  /** 辺のハンドルの棒。表示座標で返す。描画と当たり判定で同じものを使う */
+  #edgeBar(quad: Quad, edge: number, fit: ReturnType<typeof containFit>) {
+    const a = toDisplay(quad[edge], fit);
+    const b = toDisplay(quad[(edge + 1) % 4], fit);
+    const len = Math.hypot(b.x - a.x, b.y - a.y);
+    const mid = { x: (a.x + b.x) / 2, y: (a.y + b.y) / 2 };
+    if (len < 1e-6) return { start: mid, end: mid, angle: 0, half: 0 };
+    const ux = (b.x - a.x) / len;
+    const uy = (b.y - a.y) / len;
+    // 辺が短いときは隅のハンドルと重ならないよう縮める
+    const half = Math.min(EDGE_HALF_LENGTH * this.#ratio, len * EDGE_LENGTH_RATIO);
+    return {
+      start: { x: mid.x - ux * half, y: mid.y - uy * half },
+      end: { x: mid.x + ux * half, y: mid.y + uy * half },
+      angle: Math.atan2(uy, ux),
+      half,
+    };
+  }
+
   render(): void {
     const image = this.#image;
     const quad = this.#quad;
@@ -123,24 +162,37 @@ export class CornerEditor {
 
     drawQuad(this.#ctx, quad, fit, { stroke: "#22c55e", lineWidth: 2 * this.#ratio });
 
-    for (const p of pts) this.#drawHandle(p, CORNER_RADIUS * this.#ratio, false);
-    for (let edge = 0; edge < 4; edge++) {
-      this.#drawHandle(toDisplay(handlePosition(quad, EDGE_HANDLE_START + edge), fit), EDGE_RADIUS * this.#ratio, true);
-    }
+    for (let edge = 0; edge < 4; edge++) this.#drawEdgeHandle(quad, edge, fit);
+    for (const p of pts) this.#drawCornerHandle(p);
   }
 
-  /** 隅は丸、辺は角丸の四角。掴んだときの効き方が違うので見た目でも分ける */
-  #drawHandle(p: Point, radius: number, isEdge: boolean): void {
+  #drawCornerHandle(p: Point): void {
     const ctx = this.#ctx;
     ctx.save();
     ctx.beginPath();
-    if (isEdge) {
-      const r = radius * 0.9;
-      if (typeof ctx.roundRect === "function") ctx.roundRect(p.x - r, p.y - r, r * 2, r * 2, r * 0.45);
-      else ctx.rect(p.x - r, p.y - r, r * 2, r * 2);
-    } else {
-      ctx.arc(p.x, p.y, radius, 0, Math.PI * 2);
-    }
+    ctx.arc(p.x, p.y, CORNER_RADIUS * this.#ratio, 0, Math.PI * 2);
+    ctx.fillStyle = "#ffffff";
+    ctx.fill();
+    ctx.lineWidth = 2 * this.#ratio;
+    ctx.strokeStyle = "#22c55e";
+    ctx.stroke();
+    ctx.restore();
+  }
+
+  /** 辺のハンドルは辺に沿った棒。押し引きの方向が見た目で分かる */
+  #drawEdgeHandle(quad: Quad, edge: number, fit: ReturnType<typeof containFit>): void {
+    const bar = this.#edgeBar(quad, edge, fit);
+    if (bar.half <= 0) return;
+    const ctx = this.#ctx;
+    const mid = toDisplay(handlePosition(quad, EDGE_HANDLE_START + edge), fit);
+    const t = EDGE_THICKNESS * this.#ratio;
+
+    ctx.save();
+    ctx.translate(mid.x, mid.y);
+    ctx.rotate(bar.angle);
+    ctx.beginPath();
+    if (typeof ctx.roundRect === "function") ctx.roundRect(-bar.half, -t, bar.half * 2, t * 2, t);
+    else ctx.rect(-bar.half, -t, bar.half * 2, t * 2);
     ctx.fillStyle = "#ffffff";
     ctx.fill();
     ctx.lineWidth = 2 * this.#ratio;
@@ -180,15 +232,19 @@ export class CornerEditor {
       }
     });
     if (nearest < 0) {
+      // 棒のどこを掴んでもよい。中点だけだと狙いにくい
+      let bestEdge = EDGE_GRAB * this.#ratio;
       for (let handle = EDGE_HANDLE_START; handle < HANDLE_COUNT; handle++) {
-        const mid = toDisplay(handlePosition(quad, handle), fit);
-        const d = Math.hypot(p.x - mid.x, p.y - mid.y);
-        if (d < best) {
-          best = d;
+        const bar = this.#edgeBar(quad, handle - EDGE_HANDLE_START, fit);
+        const d = distanceToSegment(p, bar.start, bar.end);
+        if (d < bestEdge) {
+          bestEdge = d;
           nearest = handle;
         }
       }
     }
+    // ハンドルの外なら、枠の内側を掴んで範囲ごと動かす
+    if (nearest < 0 && pointInQuad(quad, toSource(p, fit))) nearest = MOVE_HANDLE;
     if (nearest < 0) return;
 
     this.#dragging = nearest;

@@ -14,7 +14,10 @@ export type CropMode = "quad" | "rect";
 
 /** 0〜3 が四隅、4〜7 が辺(辺 i は隅 i と隅 i+1 を結ぶ) */
 export const EDGE_HANDLE_START = 4;
+/** ハンドル(隅 4 + 辺 4)の数 */
 export const HANDLE_COUNT = 8;
+/** 枠の内側を掴んで範囲ごと動かすときの番号 */
+export const MOVE_HANDLE = 8;
 
 /** 潰れて操作不能にならないための最小の幅・高さ(画像座標) */
 export const MIN_CROP_SIZE = 24;
@@ -33,6 +36,43 @@ export function edgeMidpoint(quad: Quad, edge: number): Point {
 /** ハンドル番号に対応する画面上の位置 */
 export function handlePosition(quad: Quad, handle: number): Point {
   return isEdgeHandle(handle) ? edgeMidpoint(quad, handle - EDGE_HANDLE_START) : quad[handle];
+}
+
+/**
+ * 点が四角形の内側にあるか。範囲ごと動かす操作の判定に使う。
+ * 交差数で見るので、へこんだ四角形でも正しく判定できる。
+ */
+export function pointInQuad(quad: Quad, p: Point): boolean {
+  let inside = false;
+  for (let i = 0, j = 3; i < 4; j = i++) {
+    const a = quad[i];
+    const b = quad[j];
+    const straddles = a.y > p.y !== b.y > p.y;
+    if (straddles && p.x < ((b.x - a.x) * (p.y - a.y)) / (b.y - a.y) + a.x) inside = !inside;
+  }
+  return inside;
+}
+
+/**
+ * 四隅をまとめて平行移動する。形は一切変えない。
+ * 画像からはみ出さないよう、移動量そのものを縮める(隅ごとに丸めると形が崩れるため)。
+ */
+export function translateQuad(quad: Quad, delta: Point, width: number, height: number): Quad {
+  const xs = [quad[0].x, quad[1].x, quad[2].x, quad[3].x];
+  const ys = [quad[0].y, quad[1].y, quad[2].y, quad[3].y];
+  const minX = Math.min(...xs);
+  const maxX = Math.max(...xs);
+  const minY = Math.min(...ys);
+  const maxY = Math.max(...ys);
+
+  const dx = Math.max(-minX, Math.min(width - maxX, delta.x));
+  const dy = Math.max(-minY, Math.min(height - maxY, delta.y));
+  return [
+    { x: quad[0].x + dx, y: quad[0].y + dy },
+    { x: quad[1].x + dx, y: quad[1].y + dy },
+    { x: quad[2].x + dx, y: quad[2].y + dy },
+    { x: quad[3].x + dx, y: quad[3].y + dy },
+  ];
 }
 
 function clampPoint(p: Point, width: number, height: number): Point {
@@ -134,6 +174,7 @@ export function moveHandle(
   width: number,
   height: number,
 ): Quad {
+  if (handle === MOVE_HANDLE) return translateQuad(base, delta, width, height);
   if (handle < 0 || handle >= HANDLE_COUNT) return base;
   return mode === "rect"
     ? moveOnRect(base, handle, pointer, width, height)

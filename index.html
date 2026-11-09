@@ -18,23 +18,24 @@
   <h1>pwa-doc-scan</h1>
   <div class="bar-actions">
     <button id="nav-pages" class="ghost" type="button" hidden>ページ <span id="pages-count">0</span></button>
-    <button id="nav-diag" class="ghost" type="button" aria-label="診断">診断</button>
+    <button id="nav-menu" class="ghost" type="button">メニュー</button>
   </div>
 </header>
 
 <main>
-  <!-- ホーム -->
-  <section id="view-home" class="view">
+  <!-- メニュー(起動直後は撮影画面。ここは副次的な入口) -->
+  <section id="view-menu" class="view" hidden>
+    <div class="actions">
+      <button id="btn-start" class="primary big" type="button">カメラに戻る</button>
+      <label class="button big" for="file-import">写真から読み込む</label>
+      <input type="file" id="file-import" accept="image/*" hidden>
+      <button id="btn-diag" class="big" type="button">診断</button>
+    </div>
     <div class="card">
       <p class="lead">
         書類を撮影して、モノクロやカラーの PDF にします。
         撮影・処理・保存はすべてこの端末の中で完結し、画像が外部に送られることはありません。
       </p>
-    </div>
-    <div class="actions">
-      <button id="btn-start" class="primary big" type="button">カメラを開始</button>
-      <label class="button big" for="file-import">写真から読み込む</label>
-      <input type="file" id="file-import" accept="image/*" hidden>
     </div>
     <p class="note" id="permission-note">
       カメラの使用許可を求められます。ホーム画面から起動した場合、
@@ -52,7 +53,6 @@
     <div class="controls">
       <button id="btn-torch" class="ghost" type="button" hidden>ライト</button>
       <button id="btn-shutter" class="shutter" type="button" aria-label="撮影"></button>
-      <button id="btn-cancel-capture" class="ghost" type="button">やめる</button>
     </div>
     <p class="note">枠が書類に合っていなくても撮影できます。次の画面で四隅を直せます。</p>
   </section>
@@ -143,7 +143,7 @@
     </div>
     <div class="controls">
       <button id="btn-back-adjust" class="ghost" type="button">四隅とモードを直す</button>
-      <button id="btn-home" class="ghost" type="button">最初から</button>
+      <button id="btn-home" class="ghost" type="button">カメラに戻る</button>
     </div>
   </section>
 

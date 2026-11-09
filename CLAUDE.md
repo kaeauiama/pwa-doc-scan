@@ -40,8 +40,7 @@ npm run build      # dist/ を生成(GitHub Pages が使う)
 
 ## 現在地
 
-**M0 / M0.5 / M1 / M3(REQ-10)完了。実機でライブ検出・PDF 化・共有シート・機内モードを確認済み。
-テスト 54 件通過。**
+**M0 / M0.5 / M1 / M3(REQ-10)/ M2 の REQ-09 完了。実機で運用中。テスト 87 件通過。**
 
 実機計測で机上の前提が覆った(D-017 / D-025)。`getUserMedia` は **4032x3024 /
 12.2MP / A4 実効 366dpi** を **30fps・発熱なし**で返し、**`torch` も制御できる**。
@@ -54,7 +53,8 @@ npm run build      # dist/ を生成(GitHub Pages が使う)
   **カラー / グレースケール / 白黒2値**の 3 モード(REQ-20)
 - アダプタ: `LiveCameraSource` / `FileImportSource` / `CanvasJpegEncoder` /
   `ShareExporter` / `DownloadExporter`
-- UI: `src/ui/`。ホーム / 撮影 / 四隅調整 / 結果 / 診断 の 5 画面。
+- UI: `src/ui/`。**起動したら即、撮影画面**(D-045)。撮影 / 範囲調整 / 結果 /
+  ページ一覧 / メニュー / 診断 の 6 画面。
   ライブ輪郭オーバーレイ、範囲調整(ゆがみ補正 / 矩形、隅・辺・範囲ごとの移動)、
   モード・DPI 切替、torch、ページ一覧、
   ブレ検出の警告、白黒2値の詳細設定(文字の濃さ・方式)、設定の記憶、

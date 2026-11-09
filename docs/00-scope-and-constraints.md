@@ -52,7 +52,7 @@ PDF として保存する。iPhone / Android の両方で、インストール�
 | REQ-13 | オフラインで全機能が動く(Service Worker で precache) | M1 |
 | REQ-14 | 非対応・失敗は**理由コード**とともに画面に出す(例: `UNSUPPORTED_NO_CAMERA`, `UNSUPPORTED_NO_SHARE_FILES`, `DEGRADED_LOW_RESOLUTION`) | M1 |
 | REQ-15 | 診断画面を持つ。実測した解像度・利用可能 API・失敗履歴を確認できる | M1 |
-| REQ-16 | カメラは起動時に自動で開かず、明示操作で開始する。権限が起動ごとに聞かれることを UI で説明する(D-023) | M1 |
+| REQ-16 | **起動したら即、撮影画面にしてカメラを開く**(D-045、D-023 を撤回)。画面が見えていない間は開かず、撮影画面を離れたら止める。権限が起動ごとに聞かれることはメニューで説明する | M1 |
 | REQ-17 | manifest を出し `display: standalone` を宣言する。standalone 判定は `navigator.standalone` を優先する(D-022) | M1 |
 | REQ-18 | プレビューは常に最大解像度で流す。解像度の切り替えは行わない(D-025) | M1 |
 | REQ-19 | torch(ライト)の ON/OFF を撮影 UI に置く。非対応端末では出さない。実機で点灯を確認済み | M1 |

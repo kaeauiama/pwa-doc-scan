@@ -27,7 +27,7 @@ const $ = <T extends HTMLElement>(id: string): T => {
 };
 
 const views = {
-  home: $("view-home"),
+  menu: $("view-menu"),
   capture: $("view-capture"),
   adjust: $("view-adjust"),
   result: $("view-result"),
@@ -126,7 +126,8 @@ function nextFrame(): Promise<void> {
 
 function show(name: ViewName): void {
   for (const [key, el] of Object.entries(views)) el.hidden = key !== name;
-  if (name !== "capture") stopLiveDetection();
+  // 撮影画面を離れたらカメラを手放す。見えていない間は映像を受け取らない(HC-2)
+  if (name !== "capture") stopCamera();
 }
 
 function fillTable(table: HTMLTableElement, rows: Record<string, string | boolean | number>): void {
@@ -563,7 +564,7 @@ async function savePages(): Promise<void> {
       pageSharpness.clear();
       refreshPagesBadge();
       renderPageList();
-      show("home");
+      show("menu");
     }
   } catch (err) {
     fail("まとめて保存", err);
@@ -586,7 +587,7 @@ function syncOptionVisibility(): void {
 }
 
 $("btn-start").addEventListener("click", () => {
-  void startCamera();
+  void openCamera();
 });
 
 $<HTMLInputElement>("file-import").addEventListener("change", async (event) => {
@@ -634,11 +635,6 @@ $("btn-torch").addEventListener("click", async () => {
     button.classList.toggle("primary", !next);
     say("ライトを操作できませんでした。", "TORCH_UNAVAILABLE");
   }
-});
-
-$("btn-cancel-capture").addEventListener("click", () => {
-  stopCamera();
-  show("home");
 });
 
 $("btn-back-capture").addEventListener("click", () => {
@@ -726,12 +722,18 @@ $("btn-back-adjust").addEventListener("click", () => {
 });
 $("btn-home").addEventListener("click", () => {
   captured = null;
+  displayCanvas = null;
   lastOutput = null;
-  show("home");
+  lastScan = null;
+  void openCamera();
 });
 
 $("btn-add-page").addEventListener("click", () => {
   void addCurrentPage();
+});
+
+$("nav-menu").addEventListener("click", () => {
+  show("menu");
 });
 
 $("nav-pages").addEventListener("click", () => {
@@ -758,7 +760,7 @@ $("btn-pages-save").addEventListener("click", () => {
   void savePages();
 });
 
-$("nav-diag").addEventListener("click", () => {
+$("btn-diag").addEventListener("click", () => {
   fillTable($<HTMLTableElement>("diag-env"), collectEnvironment());
   const table = $<HTMLTableElement>("diag-errors");
   const records = getFailures();
@@ -781,7 +783,7 @@ $("btn-diag-back").addEventListener("click", () => {
     show("pages");
     return;
   }
-  show(captured ? "adjust" : "home");
+  show(captured ? "adjust" : "menu");
 });
 
 $("btn-copy-diag").addEventListener("click", async () => {
@@ -824,6 +826,14 @@ if (isStandalone()) {
     "カメラの使用許可を求められます。ホーム画面から起動している場合、許可はアプリを開き直すたびに聞かれます(iOS の仕様です)。";
 }
 
+/**
+ * カメラを開き、だめならメニューを見せる(D-045)。
+ * 失敗の理由コードは `startCamera` 側でトーストと診断に残る。
+ */
+async function openCamera(): Promise<void> {
+  if (!(await startCamera())) show("menu");
+}
+
 refreshPagesBadge();
 setSegmented($("mode-group"), mode, "mode");
 setSegmented($("format-group"), format, "format");
@@ -833,7 +843,34 @@ setSegmented($("crop-group"), crop, "crop");
 $<HTMLInputElement>("opt-whiten").checked = whiten;
 $<HTMLInputElement>("opt-strength").value = String(binarizeStrength);
 syncOptionVisibility();
-show("home");
+
+/*
+ * 基本の用途は撮影なので、開いたら即、撮影画面にする(D-045)。
+ *
+ * ただし読み込み時点で画面が見えていないことがある(背景タブ、起動直後の一瞬)。
+ * その場で諦めるとカメラ優先の意味が消えるので、見えるようになってから開く。
+ * 背景タブのまま勝手にカメラが回ることもない。
+ */
+function openCameraWhenVisible(): void {
+  if (document.visibilityState === "visible") {
+    show("capture");
+    void openCamera();
+    return;
+  }
+  show("menu");
+  const onVisible = (): void => {
+    if (document.visibilityState !== "visible") return;
+    document.removeEventListener("visibilitychange", onVisible);
+    // その間に利用者が別の画面へ行っていたら邪魔しない
+    if (!views.menu.hidden) {
+      show("capture");
+      void openCamera();
+    }
+  };
+  document.addEventListener("visibilitychange", onVisible);
+}
+
+openCameraWhenVisible();
 
 if ("serviceWorker" in navigator) {
   globalThis.addEventListener("load", () => {

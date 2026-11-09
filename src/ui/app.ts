@@ -812,9 +812,39 @@ globalThis.addEventListener("beforeunload", (event) => {
 });
 
 // HC-2: 画面が隠れたらカメラを止める。バックグラウンド撮影を構造的に不可能にする
-document.addEventListener("visibilitychange", () => {
-  if (document.visibilityState === "hidden") stopCamera();
-});
+/**
+ * 起動直後、画面が見えていなくてまだ一度もカメラを開いていない状態か。
+ * 見えるようになった最初の一回だけ撮影画面に入る。
+ */
+let awaitingFirstOpen = false;
+
+/**
+ * 表示状態に合わせてカメラを開閉する。
+ *
+ * 隠れたら止める(HC-2。見ていない間は映像を受け取らない)。
+ * **戻ってきたら開き直す**(D-046)。PWA は再読み込みされずに復帰することがあり、
+ * 止めたまま放置すると撮影画面なのにカメラが動かない状態になる。
+ */
+function syncCameraToVisibility(): void {
+  if (document.visibilityState !== "visible") {
+    stopCamera();
+    return;
+  }
+  if (awaitingFirstOpen) {
+    awaitingFirstOpen = false;
+    // その間に利用者が別の画面へ行っていたら邪魔しない
+    if (!views.menu.hidden) {
+      show("capture");
+      void openCamera();
+    }
+    return;
+  }
+  if (!views.capture.hidden && !camera?.isRunning()) void openCamera();
+}
+
+document.addEventListener("visibilitychange", syncCameraToVisibility);
+// bfcache から戻った場合は visibilitychange が来ないことがある
+globalThis.addEventListener("pageshow", syncCameraToVisibility);
 
 globalThis.addEventListener("resize", () => {
   if (!views.adjust.hidden) editor?.layout();
@@ -857,17 +887,9 @@ function openCameraWhenVisible(): void {
     void openCamera();
     return;
   }
+  // 見えるようになってから開く。再開の面倒は syncCameraToVisibility が見る
+  awaitingFirstOpen = true;
   show("menu");
-  const onVisible = (): void => {
-    if (document.visibilityState !== "visible") return;
-    document.removeEventListener("visibilitychange", onVisible);
-    // その間に利用者が別の画面へ行っていたら邪魔しない
-    if (!views.menu.hidden) {
-      show("capture");
-      void openCamera();
-    }
-  };
-  document.addEventListener("visibilitychange", onVisible);
 }
 
 openCameraWhenVisible();

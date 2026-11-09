@@ -175,6 +175,17 @@ export class LiveCameraSource implements ImageSource {
     return { width, height, data: image.data };
   }
 
+  /**
+   * 実際に映像が流れているか。
+   *
+   * `#stream` が残っていても、OS に取り上げられるなどでトラックが終わっていることがある。
+   * 復帰時に開き直すべきかの判断は、このトラックの状態で決める。
+   */
+  isRunning(): boolean {
+    const track = this.#track();
+    return track !== null && track.readyState === "live";
+  }
+
   /** torch(ライト)を制御できるか。iOS 18.7 実機では true だった */
   isTorchAvailable(): boolean {
     const track = this.#track();
